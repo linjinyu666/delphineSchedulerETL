@@ -1,0 +1,30 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="ApiApplicationServer" type="Application" factoryName="Application" nameIsGenerated="true">
+    <option name="MAIN_CLASS_NAME" value="org.apache.dolphinscheduler.api.ApiApplicationServer" />
+    <module name="dolphinscheduler-api" />
+    <option name="VM_PARAMETERS" value="-Dspring.profiles.active=mysql -DDOCKER=true" />
+    <extension name="coverage">
+      <pattern>
+        <option name="PATTERN" value="org.apache.dolphinscheduler.api.*" />
+        <option name="ENABLED" value="true" />
+      </pattern>
+    </extension>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+  <configuration default="false" name="ApiApplicationServer" type="SpringBootApplicationConfigurationType" factoryName="Spring Boot" nameIsGenerated="true">
+    <module name="dolphinscheduler-api" />
+    <option name="SPRING_BOOT_MAIN_CLASS" value="org.apache.dolphinscheduler.api.ApiApplicationServer" />
+    <option name="VM_PARAMETERS" value="-DDOCKER=true -Dspring.profiles.active=mysql -Duser.timezone=UTC" />
+    <extension name="coverage">
+      <pattern>
+        <option name="PATTERN" value="org.apache.dolphinscheduler.api.*" />
+        <option name="ENABLED" value="true" />
+      </pattern>
+    </extension>
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>
