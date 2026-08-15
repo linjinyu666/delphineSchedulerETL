@@ -1,0 +1,172 @@
+/*
+ * Licensed to the Apache Software Foundation (ASF) under one or more
+ * contributor license agreements.  See the NOTICE file distributed with
+ * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+$borderDark: rgba(255, 255, 255, 0.09);
+$borderLight: rgb(239, 239, 245);
+$bgDark: rgb(24, 24, 28);
+$bgLight: #ffffff;
+
+// 与工作流定义创建页保持完全一致的容器样式
+.container {
+  width: 100%;
+  padding: 16px;
+  box-sizing: border-box;
+  height: calc(100vh - 92px);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.light {
+  background-color: $bgLight;
+}
+
+// 顶部工具栏（参考 dag-toolbar 样式）
+.toolbar {
+  height: 50px;
+  padding: 0 20px;
+  border-radius: 4px;
+  border: 1px solid $borderLight;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  background: $bgLight;
+  flex-shrink: 0;
+}
+
+// 主体：sidebar + canvas
+.content {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+  margin-top: 16px;
+  gap: 12px;
+}
+
+// 左侧节点面板
+.sidebar {
+  width: 190px;
+  flex-shrink: 0;
+  border: 1px solid $borderLight;
+  border-radius: 4px;
+  padding: 8px;
+  overflow-y: auto;
+  background: $bgLight;
+}
+
+.sidebar-title {
+  font-weight: 600;
+  margin-bottom: 4px;
+  padding: 4px 8px;
+  color: #333;
+  font-size: 13px;
+}
+
+// 中央画布（与 dag-canvas 一致）
+.canvas {
+  flex: 1;
+  position: relative;
+  min-width: 0;
+  border: 1px solid $borderLight;
+  border-radius: 4px;
+  background: $bgLight;
+  overflow: hidden;
+}
+
+// 仿工作流 minimap 样式
+.minimap {
+  position: absolute;
+  right: 16px;
+  bottom: 16px;
+  width: 250px;
+  height: 140px;
+  background: #f5f7fa;
+  border: 1px solid #dcdfe6;
+  border-radius: 4px;
+  overflow: hidden;
+  z-index: 9;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+}
+
+// 节点项（仿工作流 sidebar-item）
+.node-item {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  height: 32px;
+  margin-bottom: 8px;
+  padding: 0 10px;
+  border-radius: 4px;
+  border: 1px solid $borderLight;
+  background: $bgLight;
+  cursor: grab;
+  font-size: 12px;
+  user-select: none;
+  box-sizing: border-box;
+  gap: 8px;
+  transition: background 0.15s;
+
+  &:hover {
+    background: #f5f7fa;
+    border-color: #c0c4cc;
+
+    // hover 时把节点 icon 变蓝（通过 filter）
+    .node-icon {
+      filter: brightness(0) saturate(100%) invert(36%) sepia(99%) saturate(1899%) hue-rotate(200deg) brightness(100%) contrast(101%);
+    }
+  }
+
+  &:active {
+    cursor: grabbing;
+  }
+}
+
+.node-icon {
+  display: inline-block;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.node-label {
+  flex: 1;
+  color: #333;
+  font-size: 13px;
+}
+
+.node-fav {
+  color: #c0c4cc;
+  cursor: pointer;
+  font-size: 13px;
+  flex-shrink: 0;
+  transition: color 0.15s;
+
+  &:hover {
+    color: #f0a020;
+  }
+}
+
+.node-fav-active {
+  color: #f0a020;
+}
+
+// 工具栏标题样式
+.toolbar-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: #333;
+}
