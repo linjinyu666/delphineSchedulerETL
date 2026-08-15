@@ -20,7 +20,7 @@ interface FileReq {
 }
 
 interface ResourceTypeReq {
-  type: 'FILE'
+  type: 'FILE' | 'ETL'
   programType?: string
 }
 

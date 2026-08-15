@@ -156,13 +156,14 @@ export default defineComponent({
     const goBread = (fullName: string) => {
       const { tenantCode } = variables
       const baseDir = userStore.getBaseResDir
+      const isEtl = props.resourceType === 'ETL'
       if (fullName === '' || !fullName.startsWith(baseDir)) {
         router.push({
-          name: 'file-manage'
+          name: isEtl ? 'etl-manage' : 'file-manage'
         })
       } else {
         router.push({
-          name: 'resource-file-subdirectory',
+          name: isEtl ? 'etl-subdirectory' : 'resource-file-subdirectory',
           query: { prefix: fullName, tenantCode: tenantCode }
         })
       }
@@ -198,7 +199,14 @@ export default defineComponent({
       handleUploadFile,
       tableWidth
     } = this
-    const manageTitle = t('resource.file.file_manage')
+    const isEtl = this.resourceType === 'ETL'
+    const manageTitle = isEtl
+      ? 'ETL 作业管理'
+      : t('resource.file.file_manage')
+    const createBtnLabel = isEtl
+      ? '新建 ETL 作业'
+      : t('resource.file.create_file')
+    const uploadBtnLabel = isEtl ? '上传 ETL 文件' : t('resource.file.upload_files')
 
     return (
       <NSpace vertical>
@@ -214,11 +222,11 @@ export default defineComponent({
               </NButton>
               {
                 <NButton onClick={handleCreateFile} class='btn-create-file'>
-                  {t('resource.file.create_file')}
+                  {createBtnLabel}
                 </NButton>
               }
               <NButton onClick={handleUploadFile} class='btn-upload-resource'>
-                {t('resource.file.upload_files')}
+                {uploadBtnLabel}
               </NButton>
             </NButtonGroup>
             <NSpace>

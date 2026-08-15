@@ -62,6 +62,7 @@
         <module>dolphinscheduler-task-remoteshell</module>
         <module>dolphinscheduler-task-aliyunserverlessspark</module>
         <module>dolphinscheduler-task-emr-serverless</module>
+        <module>dolphinscheduler-task-etl</module>
     </modules>
 
     <dependencyManagement>

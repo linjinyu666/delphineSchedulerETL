@@ -173,6 +173,11 @@ export function useDataList() {
             icon: renderIcon(FileSearchOutlined)
           },
           {
+            label: 'ETL 作业管理',
+            key: '/resource/etl-manage',
+            icon: renderIcon(FileSearchOutlined)
+          },
+          {
             label: t('menu.task_group_manage'),
             key: 'task-group-manage',
             icon: renderIcon(GroupOutlined),

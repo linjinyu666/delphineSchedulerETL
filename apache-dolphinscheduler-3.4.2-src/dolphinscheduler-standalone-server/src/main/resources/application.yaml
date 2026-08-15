@@ -92,6 +92,12 @@ mybatis-plus:
 
 registry:
   type: jdbc
+  hikariConfig:
+    driverClassName: org.h2.Driver
+    jdbcUrl: jdbc:h2:mem:dolphinscheduler;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=true
+    username: sa
+    password: ""
+    poolName: DolphinSchedulerRegistryDataSource
 
 security:
   authentication:

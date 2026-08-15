@@ -41,6 +41,29 @@ export default {
       }
     },
     {
+      path: '/resource/etl-manage',
+      name: 'etl-manage',
+      component: components['resource-etl'],
+      meta: {
+        title: 'ETL 作业管理',
+        activeMenu: 'resource',
+        showSide: true,
+        auth: []
+      }
+    },
+    {
+      path: '/resource/etl/designer',
+      name: 'etl-designer',
+      component: components['resource-etl-designer'],
+      meta: {
+        title: 'ETL 画布',
+        activeMenu: 'resource',
+        activeSide: '/resource/etl-manage',
+        showSide: true,
+        auth: []
+      }
+    },
+    {
       path: '/resource/file/create',
       name: 'resource-file-create',
       component: components['resource-file-create'],

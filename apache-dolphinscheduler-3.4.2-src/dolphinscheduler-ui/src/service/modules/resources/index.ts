@@ -50,6 +50,8 @@ export function queryBaseDir(params: ResourceTypeReq): any {
   })
 }
 
+export { queryBaseDir as queryResourceBaseDir }
+
 export function createResource(
   data: CreateReq & FileNameReq & NameReq & ResourceTypeReq
 ): any {

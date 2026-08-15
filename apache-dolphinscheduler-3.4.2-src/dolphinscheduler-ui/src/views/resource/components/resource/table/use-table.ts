@@ -34,14 +34,24 @@ import { defineStore } from 'pinia'
 
 const goSubFolder = (router: Router, item: any) => {
   if (item.directory) {
+    // ETL 类型走自己的子目录路由
+    const routeName = item.type === 'ETL' ? 'etl-subdirectory' : 'resource-file-subdirectory'
     router.push({
-      name: 'resource-file-subdirectory',
+      name: routeName,
       query: { prefix: item.fullName, tenantCode: item.user_name }
     })
   } else if (item.type === 'FILE') {
     router.push({
       name: 'resource-file-list',
       query: { prefix: item.fullName, tenantCode: item.user_name }
+    })
+  } else if (item.type === 'ETL') {
+    // ETL 文件点击 → 打开画布编辑器
+    const fileName = item.fileName || ''
+    const name = fileName.replace(/\.pipeline$/, '').replace(/\.json$/, '')
+    router.push({
+      name: 'etl-designer',
+      query: { name }
     })
   }
 }
@@ -164,6 +174,14 @@ export function useTable() {
 
   const createFile = () => {
     const { fullName } = variables
+    // ETL 类型走专用路由
+    if (variables.resourceType === 'ETL') {
+      router.push({
+        name: 'resource-etl-create',
+        query: { prefix: fullName || '' }
+      })
+      return
+    }
     const name = fullName ? 'resource-subfile-create' : 'resource-file-create'
     router.push({
       name,

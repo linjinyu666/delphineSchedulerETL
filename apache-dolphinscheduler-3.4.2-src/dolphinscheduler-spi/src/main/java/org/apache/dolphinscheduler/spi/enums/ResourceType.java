@@ -28,6 +28,10 @@ public enum ResourceType {
      * 0 file
      */
     FILE(0, "file"),
+    /**
+     * 1 etl
+     */
+    ETL(1, "etl"),
     ALL(2, "all");
 
     ResourceType(int code, String desc) {

@@ -26,6 +26,8 @@ public interface StorageOperator {
 
     String FILE_FOLDER_NAME = "resources";
 
+    String ETL_FOLDER_NAME = "etl";
+
     ResourceMetadata getResourceMetaData(String resourceAbsolutePath);
 
     /**

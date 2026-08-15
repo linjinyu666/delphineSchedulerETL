@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-export type ResourceType = 'FILE'
+export type ResourceType = 'FILE' | 'ETL'
 
 export interface ResourceFileTableData {
   name: string
