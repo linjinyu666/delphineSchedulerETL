@@ -79,13 +79,22 @@ export default defineComponent({
     dsTypeOptions.value = DATASOURCE_TYPES.map((t) => ({ label: t, value: t }))
 
     const emitChange = () => {
+      // 把 columns 从 string[] 转成 {name, type}[]，让后端 / 下游 pipeline-builder 拿到真实类型
+      const colsWithType = columns.value.map((col: any) => {
+        if (typeof col === 'string') {
+          // 从 columnOptions 反查类型
+          const opt = columnOptions.value.find((c: any) => c.value === col)
+          return { name: col, type: (opt && opt._type) || 'STRING' }
+        }
+        return col
+      })
       emit('update:modelValue', {
         dsType: dsType.value,
         dsId: dsId.value,
         datasourceAlias: dsInstanceOptions.value.find((o) => o.value === dsId.value)?.label || String(dsId.value || ''),
         database: database.value,
         table: table.value,
-        columns: columns.value
+        columns: colsWithType
       })
       emit('change')
     }
@@ -156,7 +165,8 @@ export default defineComponent({
         const list = await getDatasourceTableColumnsById(id, db, tbl)
         columnOptions.value = (list || []).map((c: any) => {
           const label = typeof c === 'string' ? c : c.label || c.value
-          const value = typeof c === 'string' ? c : c.value
+          // value 必须是真实列名（不含类型和 NOT NULL 标记），否则后续 emit 会把整段当 name 传给后端
+          const value = (typeof c === 'string' ? c : (c.value || label)).trim().split(/\s+/)[0]
           // 解析 label 拆出类型 / 主键 / 可空 / 说明
           const parsed = parseColumnLabelFn(label)
           return {
@@ -179,32 +189,35 @@ export default defineComponent({
     // 提前声明 parser（在 setup 中后定义前向引用）
     const parseColumnLabelFn = (label: string) => {
       const result: any = { name: label, type: '', size: '', primary: false, nullable: true, comment: '' }
-      const parts = label.split(' ')
-      result.name = parts[0] || label
-      for (let i = 1; i < parts.length; i++) {
-        const p = parts[i]
-        if (p === 'PK') {
-          result.primary = true
-        } else if (p === '[NULL]' || p === '[NOT NULL]') {
-          result.nullable = p === '[NULL]'
-        } else if (p.startsWith('[') && p.endsWith(']')) {
-          const inner = p.slice(1, -1)
-          if (inner.includes('(') && inner.endsWith(')')) {
-            const m = inner.match(/^([^(]+)\((\d+)\)$/)
-            if (m) {
-              result.type = m[1]
-              result.size = m[2]
-            } else {
-              result.type = inner
-            }
-          } else {
-            result.comment = inner
-          }
-        } else if (!result.type) {
-          result.type = p
-        } else {
-          result.comment += (result.comment ? ' ' : '') + p
+      const trimmed = label.trim()
+      // 先把所有 [..] 整体（包括带空格的 [NOT NULL]）从 label 里抽出来
+      const bracketRe = /\[([^\]]*)\]/g
+      const brackets: string[] = []
+      let stripped = trimmed.replace(bracketRe, (_m, inner) => {
+        brackets.push(inner)
+        return ''
+      }).trim()
+      // 现在 stripped 是 "name TYPE(size)"
+      const headMatch = stripped.match(/^(\S+)\s+(\S+)$/)
+      if (headMatch) {
+        result.name = headMatch[1]
+        const typePart = headMatch[2]
+        const tm = typePart.match(/^([A-Za-z][A-Za-z0-9_]*)(?:\((\d+)\))?$/)
+        if (tm) {
+          result.type = tm[1]
+          if (tm[2]) result.size = tm[2]
         }
+      } else {
+        // 只有 name, 没有类型: "id"
+        result.name = stripped
+      }
+      // brackets[0] 是 NULL/NOT NULL, brackets[1] 是 comment
+      for (const inner of brackets) {
+        const up = inner.toUpperCase().trim()
+        if (up === 'NULL') result.nullable = true
+        else if (up === 'NOT NULL') result.nullable = false
+        else if (up === 'PK') result.primary = true
+        else result.comment = (result.comment ? result.comment + ' ' : '') + inner
       }
       return result
     }
@@ -317,6 +330,16 @@ export default defineComponent({
     }
     const handleClearAll = () => {
       columns.value = []
+    }
+    // 单列切换 (在字段表格中点行)
+    const handleToggleColumn = (col: any) => {
+      if (col._primary) return
+      const idx = columns.value.indexOf(col.value)
+      if (idx >= 0) {
+        columns.value = columns.value.filter((c: string) => c !== col.value)
+      } else {
+        columns.value = [...columns.value, col.value]
+      }
     }
 
     // 字段加载完后默认全选

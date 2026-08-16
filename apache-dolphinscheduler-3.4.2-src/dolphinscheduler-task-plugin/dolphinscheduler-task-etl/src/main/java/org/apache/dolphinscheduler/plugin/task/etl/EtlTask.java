@@ -194,10 +194,12 @@ public class EtlTask extends AbstractTask {
     }
 
     private static int countEntries(String spec) {
-        if (spec == null || spec.isEmpty()) return 0;
+        if (spec == null || spec.isEmpty())
+            return 0;
         int n = 0;
         for (String s : spec.split(";")) {
-            if (!s.trim().isEmpty()) n++;
+            if (!s.trim().isEmpty())
+                n++;
         }
         return n;
     }
@@ -211,7 +213,8 @@ public class EtlTask extends AbstractTask {
             return etlParameters.getLibDir().trim();
         }
         String env = System.getenv("FLINK_LEARNING_LIB");
-        if (env != null && !env.isEmpty()) return env;
+        if (env != null && !env.isEmpty())
+            return env;
         return new File(System.getProperty("user.dir"), "lib").getAbsolutePath();
     }
 
@@ -222,7 +225,8 @@ public class EtlTask extends AbstractTask {
             File[] files = dir.listFiles((f) -> f.isFile() && f.getName().endsWith(".jar"));
             if (files != null) {
                 for (File f : files) {
-                    if (cp.length() > 0) cp.append(File.pathSeparator);
+                    if (cp.length() > 0)
+                        cp.append(File.pathSeparator);
                     cp.append(f.getAbsolutePath());
                 }
             }
@@ -239,7 +243,8 @@ public class EtlTask extends AbstractTask {
      */
     private String resolveJavaCmd() {
         String javaHome = System.getProperty("java.home");
-        if (javaHome == null) return "java";
+        if (javaHome == null)
+            return "java";
         File jhDir = new File(javaHome);
         if (jhDir.getName().equals("jre")) {
             jhDir = jhDir.getParentFile();

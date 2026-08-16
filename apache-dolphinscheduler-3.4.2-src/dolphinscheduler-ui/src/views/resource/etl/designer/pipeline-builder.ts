@@ -92,9 +92,10 @@ export function buildPipeline(
 ): BuiltPipeline {
   const dsIndex = new Map<string, DatasourceConfig>()
   for (const ds of datasources) {
-    if (!ds.id) throw new Error('数据源缺少 id')
-    if (dsIndex.has(ds.id)) throw new Error(`数据源 id 重复: ${ds.id}`)
-    dsIndex.set(ds.id, ds)
+    if (!ds.id && (ds.id as any) !== 0) throw new Error('数据源缺少 id')
+    const key = String(ds.id)
+    if (dsIndex.has(key)) throw new Error(`数据源 id 重复: ${ds.id}`)
+    dsIndex.set(key, ds)
   }
 
   const nodeMap = new Map<string, CanvasNode>()
@@ -126,23 +127,31 @@ export function buildPipeline(
   const sources = sourceNodes
     .map((n) => {
       const cfg = n.config || {}
-      const dsId = cfg.datasourceId
+      // 兼容两种 datasourceId 存放位置:
+      //   1) n.config.datasourceId          (老 flink-etl_副本 旧协议)
+      //   2) n.config.cascade.dsId          (DS designer 新面板)
+      const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
       if (!dsId) {
         warnings.push(`source 节点 "${n.label}" 缺少 datasourceId`)
         return ''
       }
-      const ds = dsIndex.get(dsId)
+      // datasourceId 可能是 number / string / string-number, dsIndex 的 key 是 String(d.id)
+      const ds = dsIndex.get(String(dsId)) || dsIndex.get(Number(dsId))
       if (!ds) {
         warnings.push(`source 节点 "${n.label}" 引用未知数据源 ${dsId}`)
         return ''
       }
+      const table = cfg.table ?? cfg.cascade?.table ?? ''
+      const owner = cfg.owner ?? cfg.database ?? cfg.cascade?.database
+      const tableSchema = cfg.tableSchema ?? cfg.cascade?.tableSchema
+      const fields = cfg.columns ?? cfg.cascade?.columns ?? cfg.fields
       const node: DbNodeConfig = {
         alias: sanitizeAlias(n.id),
-        datasourceId: dsId,
-        table: cfg.table || '',
-        owner: cfg.owner,
-        tableSchema: cfg.tableSchema,
-        fields: cfg.columns
+        datasourceId: String(dsId),
+        table,
+        owner,
+        tableSchema,
+        fields
       }
       return formatDbNodeSource(ds, node)
     })
@@ -152,23 +161,27 @@ export function buildPipeline(
   const sinks = sinkNodes
     .map((n) => {
       const cfg = n.config || {}
-      const dsId = cfg.datasourceId
+      const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
       if (!dsId) {
         warnings.push(`sink 节点 "${n.label}" 缺少 datasourceId`)
         return ''
       }
-      const ds = dsIndex.get(dsId)
+      const ds = dsIndex.get(String(dsId)) || dsIndex.get(Number(dsId))
       if (!ds) {
         warnings.push(`sink 节点 "${n.label}" 引用未知数据源 ${dsId}`)
         return ''
       }
+      const table = cfg.table ?? cfg.cascade?.table ?? ''
+      const owner = cfg.owner ?? cfg.database ?? cfg.cascade?.database
+      const tableSchema = cfg.tableSchema ?? cfg.cascade?.tableSchema
+      const mode = cfg.mode
       const node: DbNodeConfig = {
         alias: sanitizeAlias(n.id),
-        datasourceId: dsId,
-        table: cfg.table || '',
-        owner: cfg.owner,
-        tableSchema: cfg.tableSchema,
-        mode: cfg.mode
+        datasourceId: String(dsId),
+        table,
+        owner,
+        tableSchema,
+        mode
       }
       return formatDbNodeSink(ds, node)
     })
@@ -200,8 +213,14 @@ function formatDbNodeSource(ds: DatasourceConfig, node: DbNodeConfig): string {
   const alias = node.alias || ''
   const owner = node.owner || ''
   const tableSchema = node.tableSchema || ''
+  // fields 可能是 string[] (列名) 或 {name,type}[] 对象数组,两种都支持
   const fields = (node.fields || [])
-    .map((f) => `${f.name || ''}:${f.type || 'STRING'}`)
+    .map((f: any) => {
+      if (typeof f === 'string') return `${f}:STRING`
+      if (f && typeof f === 'object') return `${f.name || ''}:${f.type || 'STRING'}`
+      return ''
+    })
+    .filter(Boolean)
     .join(',')
   return [url, ds.username || '', ds.password || '', driver, table, alias, owner, tableSchema, fields].join('|')
 }
@@ -381,9 +400,10 @@ function generateSqlFromCanvas(
         const upstream = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
         const limit = cfg.limit || 100
         if (upstream.length === 0) {
-          seg = `(SELECT * /* preview ${n.label} */ LIMIT ${limit})`
+          seg = `SELECT * /* preview ${n.label} */ LIMIT ${limit}`
         } else {
-          seg = `(SELECT * FROM (${upstream[0]}) LIMIT ${limit})`
+          // Flink SQL 不支持 SELECT * FROM (alias) 这种子查询,直接用 alias 名
+          seg = `SELECT * FROM ${upstream[0]} LIMIT ${limit}`
         }
         break
       }
@@ -400,7 +420,9 @@ function generateSqlFromCanvas(
     return seg
   }
 
-  // 找到所有 sink 的入边作为组装点
+  // 找到所有 sink / preview 的入边作为组装点
+  // preview 节点 → SELECT ... LIMIT (不写入下游, 单独 SQL)
+  // sink 节点   → INSERT INTO sink ...
   const fragments: string[] = []
   for (const snk of sinkNodes) {
     const ups = (incoming.get(snk.id) || []).map((c) => visit(c)).filter(Boolean)
@@ -419,8 +441,23 @@ function generateSqlFromCanvas(
     fragments.push(insertSql)
   }
 
+  // preview 节点：单独跑一段 SELECT (没有 sink 也可以运行)
+  const previewNodes = nodes.filter((n) => n.type === 'preview')
+  for (const prv of previewNodes) {
+    const ups = (incoming.get(prv.id) || []).map((c) => visit(c)).filter(Boolean)
+    if (ups.length === 0) {
+      warnings.push(`preview 节点 "${prv.label}" 无入边`)
+      continue
+    }
+    const cfg = prv.config || {}
+    const limit = cfg.limit || 100
+    const merged = ups.length === 1 ? ups[0] : ups.join(' UNION ALL ')
+    // Flink SQL 不支持 SELECT * FROM (alias),直接用 alias 名
+    fragments.push(`SELECT * FROM ${merged} LIMIT ${limit}`)
+  }
+
   if (fragments.length === 0) {
-    return '-- 画布上没有 sink 节点，或所有 sink 都无入边'
+    return '-- 画布上没有 sink / preview 节点，或所有 sink 都无入边'
   }
 
   return fragments.join(';\n')
@@ -469,7 +506,8 @@ export function buildPipelineRequest(
     datasources: datasources.map((d) => ({ ...d })),
     sources: sourceArr,
     sinks: sinkArr,
-    sql: built.sql
+    sql: built.sql,
+    warnings: built.warnings || []
   }
 }
 
@@ -485,8 +523,8 @@ function parseSourceSpec(spec: string, datasources: DatasourceConfig[], srcs: Ca
   const alias = parts[5]
   const matchingSrc = srcs.find((n) => sanitizeAlias(n.id) === alias)
   const cfg = matchingSrc?.config || {}
-  const dsId = cfg.datasourceId
-  const ds = datasources.find((d) => d.id === dsId)
+  const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
+  const ds = datasources.find((d) => d.id === dsId || String(d.id) === String(dsId))
   return {
     alias,
     datasourceId: dsId,
@@ -506,9 +544,10 @@ function parseSinkSpec(spec: string, datasources: DatasourceConfig[], snks: Canv
   const alias = parts[5]
   const matchingSnk = snks.find((n) => sanitizeAlias(n.id) === alias)
   const cfg = matchingSnk?.config || {}
+  const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
   return {
     alias,
-    datasourceId: cfg.datasourceId,
+    datasourceId: dsId,
     table: parts[4],
     owner: parts[6] || undefined,
     tableSchema: parts[7] || undefined,

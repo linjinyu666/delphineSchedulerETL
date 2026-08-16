@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { defineComponent, ref, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { defineComponent, ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
 import {
   NLayout,
   NLayoutHeader,
@@ -36,6 +36,10 @@ import {
   NDivider,
   NCollapse,
   NCollapseItem,
+  NModal,
+  NScrollbar,
+  NSpin,
+  NIcon,
   useMessage
 } from 'naive-ui'
 import { RollbackOutlined, SaveOutlined, PlayCircleOutlined } from '@vicons/antd'
@@ -108,6 +112,30 @@ export default defineComponent({
     const testJobId = ref<string>('') // 当前测试运行 jobId
     const testJobStatus = ref<any>(null) // 测试运行状态轮询结果
     const testOutput = ref<string>('') // 测试运行输出日志
+    const testModalVisible = ref(false) // 测试运行日志弹窗显示
+    const testLogRef = ref<HTMLElement | null>(null) // 弹窗日志滚动容器 ref
+
+    // 测试运行耗时(秒),实时计算
+    const testDuration = computed(() => {
+      const st = testJobStatus.value
+      if (!st) return 0
+      const start = st.startTime || 0
+      const end = st.status === 'RUNNING' || st.status === 'PENDING' ? Date.now() : (st.endTime || start)
+      if (!start) return 0
+      return Math.max(0, Math.round((end - start) / 1000))
+    })
+
+    // 测试运行状态标签 (颜色 + 文本)
+    const testStatusInfo = computed(() => {
+      const status = testJobStatus.value?.status || ''
+      const map: Record<string, { type: string; text: string }> = {
+        PENDING: { type: 'warning', text: 'PENDING 排队中' },
+        RUNNING: { type: 'info', text: 'RUNNING 运行中' },
+        SUCCESS: { type: 'success', text: 'SUCCESS 成功' },
+        FAILED:  { type: 'error',   text: 'FAILED 失败' }
+      }
+      return map[status] || { type: 'default', text: status || 'UNKNOWN' }
+    })
     const availableDirs = ref<Array<{ label: string; value: string }>>([]) // 可选目录
     const graph = ref<Graph>()
     const paperEl = ref<HTMLElement>()
@@ -623,17 +651,36 @@ export default defineComponent({
           pageSize: 1000,
           searchVal: ''
         })
-        const list = (res && res.data && res.data.totalList) || []
-        datasources.value = list.map((d: any) => ({
-          id: String(d.id),
-          type: (d.type || '').toLowerCase(),
-          host: d.host || '',
-          port: d.port || 0,
-          database: d.database || d.dbName || '',
-          username: d.userName || d.user || '',
-          password: d.password || '',
-          options: d.other || {}
-        }))
+        const list = (res && (res.totalList || (res.data && res.data.totalList))) || []
+        datasources.value = list.map((d: any) => {
+          // DolphinScheduler 后端把连接参数序列化在 connectionParams 字段
+          let cp: any = {}
+          if (d.connectionParams) {
+            try {
+              cp = typeof d.connectionParams === 'string'
+                ? JSON.parse(d.connectionParams)
+                : d.connectionParams
+            } catch (e) {
+              cp = {}
+            }
+          }
+          // 从 jdbcUrl / address 解析 host / port / database
+          const jdbcUrl: string = cp.jdbcUrl || cp.address || ''
+          const urlMatch = jdbcUrl.match(/^jdbc:\w+:\/\/([^:/]+)(?::(\d+))?(?:\/([^?]+))?/)
+          const host = urlMatch ? urlMatch[1] : (d.host || cp.host || '')
+          const port = urlMatch && urlMatch[2] ? parseInt(urlMatch[2], 10) : (d.port || cp.port || 0)
+          const database = urlMatch && urlMatch[3] ? urlMatch[3] : (d.database || d.dbName || cp.database || '')
+          return {
+            id: String(d.id),
+            type: (d.type || '').toLowerCase(),
+            host,
+            port,
+            database,
+            username: cp.user || d.userName || '',
+            password: d.password || cp.password || '',
+            options: cp || {}
+          }
+        })
       } catch (e) {
         console.warn('[etl-designer] loadDatasources failed:', e)
         datasources.value = []
@@ -643,14 +690,12 @@ export default defineComponent({
     // 测试运行：调 flink-etl 的 /api/pipelines/run
     const handleTestRun = async () => {
       if (!graph.value) return
-      if (!jobName.value.trim()) {
-        message.error('请填写作业名')
-        return
-      }
+      // 测试运行不需要持久化，所以允许用临时名（仅当用户未填写时）。
+      const runName = jobName.value.trim() || `etl-test-${Date.now()}`
       // 1. 健康检查
       const healthy = await checkFlinkEtlHealth()
       if (!healthy) {
-        message.error('flink-etl 后端不可达（http://localhost:8080）')
+        message.error('ETL 后端不可达，请检查 DolphinScheduler 是否启动 (/dolphinscheduler/etl/test-run)')
         return
       }
       testing.value = true
@@ -660,7 +705,7 @@ export default defineComponent({
         const nodes = graph.value.getNodes()
         const edges = graph.value.getEdges()
         const data: any = {
-          name: jobName.value.trim(),
+          name: runName,
           description: description.value.trim(),
           saveDir: saveDir.value,
           version: 1,
@@ -688,7 +733,32 @@ export default defineComponent({
           data.name,
           parallelism.value
         )
+        // 2.1 检测关键 warning：未配置 source / sink 数据源 → 拒绝提交
+        if (req.warnings && req.warnings.length > 0) {
+          const fatalWarnings = req.warnings.filter(
+            (w: string) =>
+              w.includes('缺少 datasourceId') ||
+              w.includes('引用未知数据源') ||
+              w.includes('没有任何 source 节点') ||
+              w.includes('没有任何 sink / preview 节点') ||
+              w.includes('画布中没有任何 source')
+          )
+          if (fatalWarnings.length > 0) {
+            testing.value = false
+            testOutput.value = '⚠️ 配置不完整，请先检查画布:\n' + fatalWarnings.map((w: string) => '  - ' + w).join('\n')
+            message.error(fatalWarnings[0])
+            return
+          }
+        }
+        if (req.sources.length === 0) {
+          testing.value = false
+          testOutput.value = '⚠️ 没有任何可执行的 source 节点，请先配置表输入节点的数据源、表名和字段'
+          message.error('没有任何可执行的 source 节点，请先在节点上配置数据源')
+          return
+        }
         testOutput.value = '提交中... jobName=' + req.jobName + '\n'
+        // 打开实时日志弹窗
+        testModalVisible.value = true
         // 3. POST 调 flink-etl
         const job: any = await runFlinkPipeline(req)
         testJobId.value = job.jobId
@@ -701,6 +771,11 @@ export default defineComponent({
           const st: any = await getFlinkJobStatus(testJobId.value)
           testJobStatus.value = st
           testOutput.value = 'jobId=' + st.jobId + '\nstatus=' + st.status + '\nstartTime=' + new Date(st.startTime).toLocaleString() + '\n\n' + (st.message || '')
+          // 自动滚动到底部 (类似终端 tail -f)
+          await nextTick()
+          if (testLogRef.value) {
+            testLogRef.value.scrollTop = testLogRef.value.scrollHeight
+          }
           if (st.status === 'PENDING' || st.status === 'RUNNING') {
             setTimeout(poll, 2000)
           } else {
@@ -729,6 +804,46 @@ export default defineComponent({
       } catch (e: any) {
         message.error('停止失败：' + (e?.message || ''))
       }
+    }
+
+    // 复制日志到剪贴板
+    const handleCopyLog = async () => {
+      const text = testOutput.value || ''
+      try {
+        if (navigator.clipboard && window.isSecureContext) {
+          await navigator.clipboard.writeText(text)
+        } else {
+          // Fallback: 创建一个临时 textarea
+          const ta = document.createElement('textarea')
+          ta.value = text
+          ta.style.position = 'fixed'
+          ta.style.left = '-9999px'
+          document.body.appendChild(ta)
+          ta.select()
+          document.execCommand('copy')
+          document.body.removeChild(ta)
+        }
+        message.success('日志已复制到剪贴板')
+      } catch (e: any) {
+        message.error('复制失败：' + (e?.message || ''))
+      }
+    }
+
+    // 下载日志为 .log 文件
+    const handleDownloadLog = () => {
+      const text = testOutput.value || ''
+      const status = testJobStatus.value?.status || 'UNKNOWN'
+      const jobId = testJobId.value || 'no-id'
+      const filename = `etl-test-${jobId}-${status}.log`
+      const blob = new Blob([text], { type: 'text/plain;charset=utf-8' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = filename
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      URL.revokeObjectURL(url)
     }
 
     const handleBack = () => {
@@ -979,6 +1094,65 @@ export default defineComponent({
             ></div>
           </div>
         </div>
+
+        {/* 测试运行实时日志弹窗 */}
+        <NModal
+          show={testModalVisible.value}
+          onUpdateShow={(v) => { testModalVisible.value = v }}
+          preset='card'
+          title='测试运行日志'
+          style='width: 900px; max-width: 95vw;'
+          mask-closable={false}
+          closable
+        >
+          {{
+            default: () => (
+              <div>
+                {/* 顶部状态栏 */}
+                <div style='display: flex; align-items: center; gap: 16px; padding: 8px 12px; border-radius: 4px; background: #f5f7fa; margin-bottom: 12px;'>
+                  <NSpace align='center'>
+                    <span style='color: #666; font-size: 13px;'>状态:</span>
+                    <NTag type={testStatusInfo.value.type as any} size='medium'>
+                      {testStatusInfo.value.text}
+                    </NTag>
+                    {testing.value && <NSpin size='small' />}
+                  </NSpace>
+                  <span style='color: #666; font-size: 13px;'>
+                    jobId: <code style='background:#eaeaea;padding:2px 6px;border-radius:3px;'>{testJobId.value || '-'}</code>
+                  </span>
+                  <span style='color: #666; font-size: 13px;'>
+                    耗时: <strong style='color:#2080f0;'>{testDuration.value}</strong> 秒
+                  </span>
+                  {testJobStatus.value?.startTime ? (
+                    <span style='color: #999; font-size: 12px;'>
+                      开始: {new Date(testJobStatus.value.startTime).toLocaleTimeString()}
+                    </span>
+                  ) : null}
+                </div>
+
+                {/* 工具栏 */}
+                <div style='display: flex; justify-content: flex-end; gap: 8px; margin-bottom: 8px;'>
+                  <NButton size='tiny' onClick={handleCopyLog} disabled={!testOutput.value}>
+                    📋 复制日志
+                  </NButton>
+                  <NButton size='tiny' onClick={handleDownloadLog} disabled={!testOutput.value}>
+                    ⬇ 下载日志
+                  </NButton>
+                </div>
+
+                {/* 日志内容 */}
+                <NScrollbar
+                  ref={(el: any) => { testLogRef.value = el && el.$el ? el.$el : el }}
+                  style='max-height: 60vh; min-height: 360px;'
+                >
+                  <pre style='margin: 0; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-family: Menlo, Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; border-radius: 4px;'>
+                    {testOutput.value || '等待日志输出...'}
+                  </pre>
+                </NScrollbar>
+              </div>
+            )
+          }}
+        </NModal>
 
         {/* 节点配置抽屉 */}
         <NDrawer v-model:show={drawerShow.value} width={480} placement='right'>

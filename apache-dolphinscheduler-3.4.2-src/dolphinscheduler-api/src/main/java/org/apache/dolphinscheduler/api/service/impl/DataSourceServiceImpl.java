@@ -82,6 +82,10 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
     private static final String[] TABLE_TYPES = new String[]{TABLE, VIEW};
     private static final String TABLE_NAME = "TABLE_NAME";
     private static final String COLUMN_NAME = "COLUMN_NAME";
+    private static final String TYPE_NAME = "TYPE_NAME";
+    private static final String COLUMN_SIZE = "COLUMN_SIZE";
+    private static final String NULLABLE = "NULLABLE";
+    private static final String REMARKS = "REMARKS";
 
     @Override
     public DataSource createDataSource(User loginUser, BaseDataSourceParamDTO datasourceParam) {
@@ -458,8 +462,27 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             if (rs == null) {
                 throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
             }
+            // label 格式: "name type(size) [NULL|NOT NULL] [comment]"
+            // 例如: "id varchar(64) [NOT NULL] [primary key]"
+            // 让前端 cascade-config.tsx 的 parseColumnLabelFn 能直接解析
             while (rs.next()) {
-                columnList.add(rs.getString(COLUMN_NAME));
+                String colName = rs.getString(COLUMN_NAME);
+                String typeName = rs.getString(TYPE_NAME);
+                int colSize = rs.getInt(COLUMN_SIZE);
+                int nullable = rs.getInt(NULLABLE); // 0=No, 1=Yes
+                String remarks = rs.getString(REMARKS);
+                StringBuilder sb = new StringBuilder(colName);
+                if (typeName != null && !typeName.isEmpty()) {
+                    sb.append(' ').append(typeName);
+                    if (colSize > 0 && typeName.toUpperCase().contains("CHAR")) {
+                        sb.append('(').append(colSize).append(')');
+                    }
+                }
+                sb.append(nullable == 1 ? " [NULL]" : " [NOT NULL]");
+                if (remarks != null && !remarks.isEmpty()) {
+                    sb.append(" [").append(remarks.replace(']', '_').replace('[', '_')).append(']');
+                }
+                columnList.add(sb.toString());
             }
         } catch (Exception e) {
             log.error("Get datasource table columns error, datasourceId:{}.", dataSource.getId(), e);

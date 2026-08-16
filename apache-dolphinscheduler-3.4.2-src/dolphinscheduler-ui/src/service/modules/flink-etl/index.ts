@@ -15,15 +15,17 @@
  * limitations under the License.
  */
 
-// flink-etl 调度服务（直接调本地 flink-etl 后端，绕开 DS 后端修改）
-// flink-etl 后端默认监听 8080，且已配置 @CrossOrigin(origins = "*")
-// 调用方：ETL Designer 的"测试运行"按钮
+// ETL 调度服务 —— 直接调本地 DolphinScheduler 后端的 EtlTestRunController,
+// 后端会 spawn java 进程跑 com.example.flink.pipeline.ConfigurableJdbcEtl
+// (flink-learning-1.0.0-SNAPSHOT.jar 140MB fat-jar)。
+// 协议与原 flink-etl 后端 PipelineRequest 兼容 (sources / sinks / sql / parallelism / jobName)。
+// 调用方: ETL Designer 的"测试运行"按钮。
 
-const FLINK_ETL_BASE = 'http://localhost:8080'
+import { axios } from '@/service/service'
 
 export interface FlinkJobStatus {
   jobId: string
-  pipelineId: string
+  pipelineId?: string
   jobName: string
   status: string  // PENDING | RUNNING | SUCCESS | FAILED
   message: string
@@ -41,34 +43,34 @@ export interface PipelineRequest {
   sql?: string
 }
 
-/** 直接发起 POST 请求到 flink-etl */
+/** 提交 ETL 任务到 DS 后端 EtlTestRunController, 后端会异步 spawn java 子进程跑 */
 export function runFlinkPipeline(req: PipelineRequest): Promise<FlinkJobStatus> {
-  return fetch(`${FLINK_ETL_BASE}/api/pipelines/run`, {
-    method: 'POST',
+  // 强制 JSON：DS 默认 axios 会用 qs.stringify 转 form-urlencoded,
+  // 但 PipelineRequest 里 datasources/sources/sinks 是数组对象,
+  // form-urlencoded 会丢字段。显式指定 Content-Type 让 axios 用 JSON。
+  return axios.post('/etl/test-run', req, {
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(req)
-  }).then((r) => r.json())
+    transformRequest: [(data) => JSON.stringify(data)]
+  })
 }
 
-/** 查询 job 状态（轮询用）*/
+/** 查询 job 状态 (轮询用) */
 export function getFlinkJobStatus(jobId: string): Promise<FlinkJobStatus> {
-  return fetch(`${FLINK_ETL_BASE}/api/jobs/${jobId}`).then((r) => r.json())
+  return axios.get(`/etl/test-run/${jobId}`)
 }
 
-/** 停止任务 */
-export function stopFlinkJob(jobId: string): Promise<{ ok: boolean; message?: string }> {
-  return fetch(`${FLINK_ETL_BASE}/api/jobs/${jobId}/stop`, {
-    method: 'POST'
-  }).then((r) => r.json())
+/** 停止 job (UI "停止" 按钮调用) */
+export function stopFlinkJob(jobId: string): Promise<FlinkJobStatus> {
+  return axios.post(`/etl/test-run/${jobId}/stop`)
 }
 
-/** 健康检查（探活用）*/
+/** 健康检查: 用 head/get 测试 /etl/test-run endpoint 是否存活 (任意 jobId 会 404 但说明 controller 起来了) */
 export async function checkFlinkEtlHealth(): Promise<boolean> {
   try {
-    const r = await fetch(`${FLINK_ETL_BASE}/api/health`, { method: 'GET' })
-    const t = await r.text()
-    return t === 'ok'
-  } catch (e) {
-    return false
+    await axios.get('/etl/test-run/__healthcheck__', { timeout: 3000 })
+    return true
+  } catch (e: any) {
+    // 404/500 都算 endpoint 存在 (说明后端 controller 已加载)
+    return e?.response?.status !== undefined && e.response.status !== 0
   }
 }

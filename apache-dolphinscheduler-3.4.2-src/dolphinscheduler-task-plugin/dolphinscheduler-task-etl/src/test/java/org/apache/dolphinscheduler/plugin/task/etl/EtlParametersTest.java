@@ -21,8 +21,6 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
-import org.junit.Test;
-
 public class EtlParametersTest {
 
     @Test
@@ -51,9 +49,11 @@ public class EtlParametersTest {
     @Test
     public void testSetters() {
         EtlParameters p = new EtlParameters();
-        p.setSources("jdbc:mysql://h:3306/db|root|pwd|com.mysql.cj.jdbc.Driver|orders|src1|||;jdbc:oracle:thin:@//h:1521/svc|app|pwd|oracle.jdbc.OracleDriver|USERS|src2|APP_USER||");
+        p.setSources(
+                "jdbc:mysql://h:3306/db|root|pwd|com.mysql.cj.jdbc.Driver|orders|src1|||;jdbc:oracle:thin:@//h:1521/svc|app|pwd|oracle.jdbc.OracleDriver|USERS|src2|APP_USER||");
         p.setSinks("jdbc:mysql://h:3306/dw|root|pwd|com.mysql.cj.jdbc.Driver|orders_dw|dst1||");
-        p.setSql("INSERT INTO ${SINK_ALIAS_1} SELECT id, name FROM ${SRC_ALIAS_1} JOIN ${SRC_ALIAS_2} ON ${SRC_ALIAS_1}.uid = ${SRC_ALIAS_2}.id");
+        p.setSql(
+                "INSERT INTO ${SINK_ALIAS_1} SELECT id, name FROM ${SRC_ALIAS_1} JOIN ${SRC_ALIAS_2} ON ${SRC_ALIAS_1}.uid = ${SRC_ALIAS_2}.id");
         p.setParallelism(4);
         p.setMainClass("com.example.MyEtl");
         p.setJvmArgs("-Xmx4g");
