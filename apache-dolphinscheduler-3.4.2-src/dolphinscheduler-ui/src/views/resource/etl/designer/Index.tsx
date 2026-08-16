@@ -692,15 +692,21 @@ export default defineComponent({
       if (!graph.value) return
       // 测试运行不需要持久化，所以允许用临时名（仅当用户未填写时）。
       const runName = jobName.value.trim() || `etl-test-${Date.now()}`
+      // 打开实时日志弹窗（即使健康检查失败也会显示错误）
+      testModalVisible.value = true
+      testing.value = true
+      testJobStatus.value = { jobId: '', status: 'PENDING', startTime: Date.now(), endTime: 0, message: '' }
+      testOutput.value = '提交中... jobName=' + runName + '\n正在检查 ETL 后端健康状态...\n'
       // 1. 健康检查
       const healthy = await checkFlinkEtlHealth()
       if (!healthy) {
+        testOutput.value += '\n[ERROR] ETL 后端不可达，请检查 DolphinScheduler 是否启动 (/dolphinscheduler/etl/test-run)\n'
+        testing.value = false
+        testJobStatus.value = { jobId: '', status: 'FAILED', startTime: Date.now(), endTime: Date.now(), message: testOutput.value }
         message.error('ETL 后端不可达，请检查 DolphinScheduler 是否启动 (/dolphinscheduler/etl/test-run)')
         return
       }
-      testing.value = true
       testOutput.value = ''
-      testJobStatus.value = null
       try {
         const nodes = graph.value.getNodes()
         const edges = graph.value.getEdges()
@@ -753,12 +759,11 @@ export default defineComponent({
         if (req.sources.length === 0) {
           testing.value = false
           testOutput.value = '⚠️ 没有任何可执行的 source 节点，请先配置表输入节点的数据源、表名和字段'
+          testJobStatus.value = { jobId: '', status: 'FAILED', startTime: Date.now(), endTime: Date.now(), message: testOutput.value }
           message.error('没有任何可执行的 source 节点，请先在节点上配置数据源')
           return
         }
         testOutput.value = '提交中... jobName=' + req.jobName + '\n'
-        // 打开实时日志弹窗
-        testModalVisible.value = true
         // 3. POST 调 flink-etl
         const job: any = await runFlinkPipeline(req)
         testJobId.value = job.jobId
@@ -1143,9 +1148,10 @@ export default defineComponent({
                 {/* 日志内容 */}
                 <NScrollbar
                   ref={(el: any) => { testLogRef.value = el && el.$el ? el.$el : el }}
+                  x-scrollable
                   style='max-height: 60vh; min-height: 360px;'
                 >
-                  <pre style='margin: 0; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-family: Menlo, Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.5; white-space: pre-wrap; word-break: break-all; border-radius: 4px;'>
+                  <pre style='margin: 0; padding: 12px; background: #1e1e1e; color: #d4d4d4; font-family: Menlo, Consolas, "Courier New", monospace; font-size: 12px; line-height: 1.6; white-space: pre; border-radius: 4px; display: inline-block; min-width: 100%;'>
                     {testOutput.value || '等待日志输出...'}
                   </pre>
                 </NScrollbar>
