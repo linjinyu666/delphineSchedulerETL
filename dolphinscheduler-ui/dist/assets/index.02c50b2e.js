@@ -1,0 +1,1 @@
+import{d as s,c as e}from"./index.291055ec.js";const r=s({name:"D3Tree",render(){return e("div",{class:"tree-model"},[e("div",{class:"d3-tree"},[e("svg",{class:"tree-svg",width:"100%"},null)])])}}),d=r;export{d as default};

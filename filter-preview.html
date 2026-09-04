@@ -1,0 +1,787 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>FilterConfigDialog 重新设计预览</title>
+<style>
+  /* ====== Design Tokens ======
+     Aesthetic: refined data-tool · Linear-meets-Studio
+     一对一字段映射表 + WHERE 在下 · 克制高密度
+  */
+  :root {
+    --bg: #FAFAF9;
+    --bg-elevated: #FFFFFF;
+    --bg-muted: #F5F5F4;
+    --bg-subtle: #EFEEEC;
+    --border: #E7E5E0;
+    --border-strong: #D6D3CD;
+    --text-primary: #1C1917;
+    --text-secondary: #57534E;
+    --text-tertiary: #A8A29E;
+    --text-quaternary: #D6D3CD;
+    --accent: #0D9488;
+    --accent-soft: #CCFBF1;
+    --accent-glow: rgba(13, 148, 136, 0.08);
+    --warn: #B45309;
+    --warn-soft: #FEF3C7;
+    --error: #B91C1C;
+    --shadow-sm: 0 1px 2px rgba(28, 25, 23, 0.04);
+    --shadow-md: 0 2px 8px rgba(28, 25, 23, 0.06), 0 1px 2px rgba(28, 25, 23, 0.04);
+    --shadow-lg: 0 8px 24px rgba(28, 25, 23, 0.08), 0 2px 6px rgba(28, 25, 23, 0.04);
+    --radius: 6px;
+    --radius-sm: 4px;
+    --mono: 'SF Mono', 'JetBrains Mono', 'Fira Code', Menlo, Consolas, monospace;
+    --sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--sans);
+    background: #E8E6E1;
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 40px 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page-title {
+    text-align: center;
+    font-size: 11px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 24px;
+    font-weight: 500;
+  }
+
+  /* ====== Drawer Mock ====== */
+  .drawer-frame {
+    max-width: 560px;
+    margin: 0 auto;
+    background: var(--bg-elevated);
+    border-radius: 10px;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    position: relative;
+    /* paper grain texture */
+    background-image:
+      radial-gradient(circle at 20% 0%, rgba(13, 148, 136, 0.03), transparent 40%),
+      radial-gradient(circle at 80% 100%, rgba(180, 83, 9, 0.02), transparent 40%);
+  }
+
+  .drawer-handle {
+    height: 28px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+  }
+  .drawer-handle::before {
+    content: '';
+    width: 32px;
+    height: 3px;
+    border-radius: 2px;
+    background: var(--border-strong);
+  }
+
+  .drawer-header {
+    padding: 20px 24px 16px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .node-icon {
+    width: 28px;
+    height: 28px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, #14B8A6 0%, #0D9488 100%);
+    display: grid;
+    place-items: center;
+    color: white;
+    font-size: 13px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(13, 148, 136, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.2);
+  }
+  .header-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+  .header-sub {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+  }
+  .close-btn {
+    width: 28px;
+    height: 28px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 16px;
+    transition: all 0.15s;
+  }
+  .close-btn:hover {
+    background: var(--bg-muted);
+    color: var(--text-primary);
+  }
+
+  .drawer-body {
+    padding: 0;
+    max-height: calc(100vh - 200px);
+    overflow-y: auto;
+  }
+
+  /* ====== Section Block ====== */
+  .section {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+    position: relative;
+  }
+  .section:last-child { border-bottom: none; }
+
+  .section-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-quaternary);
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+  }
+  .section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 3px;
+    margin-bottom: 14px;
+  }
+
+  /* ====== Identity Row (alias) ====== */
+  .alias-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0 10px;
+    transition: all 0.15s;
+  }
+  .alias-row:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+    background: var(--bg-elevated);
+  }
+  .alias-tag {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-tertiary);
+    padding: 2px 6px;
+    background: var(--bg-subtle);
+    border-radius: 3px;
+  }
+  .alias-input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 10px 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+  }
+  .alias-valid {
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--accent);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    font-weight: bold;
+  }
+
+  /* ====== Field Mapping Table ====== */
+  .map-table {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    background: var(--bg-elevated);
+  }
+
+  .map-header {
+    display: grid;
+    grid-template-columns: 32px 1fr 14px 1fr 32px;
+    gap: 0;
+    padding: 8px 10px;
+    background: var(--bg-muted);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .map-row {
+    display: grid;
+    grid-template-columns: 32px 1fr 14px 1fr 32px;
+    gap: 0;
+    padding: 8px 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+    position: relative;
+  }
+  .map-row:last-child { border-bottom: none; }
+  .map-row:hover {
+    background: var(--bg);
+  }
+  .map-row.removing {
+    background: #FEF2F2;
+  }
+
+  .map-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1.5px solid var(--border-strong);
+    background: var(--bg-elevated);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    transition: all 0.1s;
+    color: white;
+    font-size: 11px;
+    line-height: 1;
+  }
+  .map-checkbox.checked {
+    background: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .map-field-src {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    padding: 4px 8px;
+    background: var(--bg-muted);
+    border-radius: var(--radius-sm);
+    border: 1px solid transparent;
+  }
+  .map-field-src.dim {
+    color: var(--text-quaternary);
+    background: transparent;
+    text-decoration: line-through;
+  }
+
+  .map-arrow {
+    text-align: center;
+    color: var(--text-quaternary);
+    font-size: 12px;
+  }
+
+  .map-field-dst {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    padding: 4px 8px;
+    background: var(--bg-elevated);
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border);
+    width: 100%;
+    outline: none;
+    transition: all 0.1s;
+  }
+  .map-field-dst:focus {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px var(--accent-glow);
+  }
+  /* 输出名冲突或为空: 红色边框 + 红色 placeholder */
+  .map-field-dst.error {
+    border-color: var(--error);
+    background: #FEF2F2;
+  }
+  .map-field-dst.error::placeholder {
+    color: var(--error);
+    opacity: 0.7;
+  }
+  /* 冲突提示徽章 (右上角小红点) */
+  .conflict-badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    background: var(--error);
+    color: white;
+    font-size: 9px;
+    font-family: var(--sans);
+    font-weight: 600;
+    padding: 1px 5px;
+    border-radius: 8px;
+    line-height: 1.4;
+    box-shadow: 0 0 0 2px var(--bg-elevated);
+    pointer-events: none;
+  }
+  .conflict-tip {
+    position: absolute;
+    top: -32px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: var(--error);
+    color: white;
+    font-size: 10px;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: var(--sans);
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s, transform 0.15s;
+    z-index: 10;
+  }
+  .conflict-tip::after {
+    content: '';
+    position: absolute;
+    bottom: -4px;
+    left: 50%;
+    transform: translateX(-50%);
+    border-left: 4px solid transparent;
+    border-right: 4px solid transparent;
+    border-top: 4px solid var(--error);
+  }
+  .map-row.has-conflict:hover .conflict-tip {
+    opacity: 1;
+    transform: translateX(-50%) translateY(-2px);
+  }
+  .map-row.has-conflict {
+    position: relative;
+  }
+
+  .map-remove {
+    width: 24px;
+    height: 24px;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    opacity: 0;
+    transition: all 0.15s;
+    font-size: 14px;
+  }
+  .map-row:hover .map-remove {
+    opacity: 1;
+  }
+  .map-remove:hover {
+    background: #FEF2F2;
+    color: var(--error);
+  }
+
+  .map-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 10px;
+    padding: 0 2px;
+    align-items: center;
+  }
+  .action-link {
+    font-size: 11px;
+    color: var(--accent);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: var(--radius-sm);
+    transition: background 0.1s;
+    font-weight: 500;
+  }
+  .action-link:hover {
+    background: var(--accent-soft);
+  }
+  .action-link.muted {
+    color: var(--text-tertiary);
+  }
+  .action-link.muted:hover {
+    background: var(--bg-muted);
+    color: var(--text-secondary);
+  }
+  .map-count {
+    margin-left: auto;
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    padding: 2px 6px;
+    background: var(--bg-muted);
+    border-radius: 3px;
+  }
+
+  /* ====== WHERE input ====== */
+  .where-shell {
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    background: var(--bg-elevated);
+    overflow: hidden;
+    transition: border 0.15s, box-shadow 0.15s;
+  }
+  .where-shell:focus-within {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 3px var(--accent-glow);
+  }
+  .where-tag-bar {
+    display: flex;
+    gap: 4px;
+    padding: 6px 8px;
+    background: var(--bg-muted);
+    border-bottom: 1px solid var(--border);
+    flex-wrap: wrap;
+  }
+  .where-token {
+    font-family: var(--mono);
+    font-size: 11px;
+    padding: 2px 6px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .where-token:hover {
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+  .where-input {
+    width: 100%;
+    border: none;
+    outline: none;
+    padding: 10px 12px;
+    font-family: var(--mono);
+    font-size: 12px;
+    background: transparent;
+    color: var(--text-primary);
+    resize: vertical;
+    min-height: 50px;
+    line-height: 1.5;
+  }
+  .where-input::placeholder {
+    color: var(--text-quaternary);
+  }
+
+  /* ====== SQL Preview ====== */
+  .preview-block {
+    background: #1A1A1A;
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #E5E5E5;
+    overflow-x: auto;
+    position: relative;
+    background-image:
+      linear-gradient(180deg, rgba(255, 255, 255, 0.02) 0%, transparent 100%);
+  }
+  .preview-label {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 9px;
+    font-family: var(--sans);
+    color: rgba(255, 255, 255, 0.3);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .kw  { color: #C084FC; }
+  .fn  { color: #67E8F9; }
+  .str { color: #86EFAC; }
+  .col { color: #FCD34D; }
+  .op  { color: #F472B6; }
+  .cmt { color: #6B7280; font-style: italic; }
+  .tbl { color: #F9A8D4; }
+
+  /* ====== Footer ====== */
+  .drawer-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  .footer-meta {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+  }
+  .footer-meta .ok {
+    color: var(--accent);
+  }
+  .footer-actions {
+    display: flex;
+    gap: 8px;
+  }
+  .btn {
+    padding: 7px 14px;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .btn:hover {
+    background: var(--bg-muted);
+  }
+  .btn.primary {
+    background: var(--text-primary);
+    color: var(--bg);
+    border-color: var(--text-primary);
+  }
+  .btn.primary:hover {
+    background: #0F0E0D;
+  }
+  .btn.primary:disabled,
+  .btn.primary.disabled {
+    background: var(--text-quaternary);
+    border-color: var(--text-quaternary);
+    color: white;
+    cursor: not-allowed;
+  }
+  .btn.primary:disabled:hover,
+  .btn.primary.disabled:hover {
+    background: var(--text-quaternary);
+  }
+
+  /* ====== Hint pill (upstream missing) ====== */
+  .warn-banner {
+    display: flex;
+    gap: 8px;
+    padding: 8px 10px;
+    background: var(--warn-soft);
+    border: 1px solid #FCD34D;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    color: var(--warn);
+    margin-bottom: 12px;
+    align-items: flex-start;
+  }
+  .warn-banner .ico {
+    flex-shrink: 0;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: var(--warn);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 9px;
+    font-weight: bold;
+    margin-top: 1px;
+  }
+
+  /* ====== Annotation labels ====== */
+  .anno {
+    position: absolute;
+    right: -180px;
+    font-size: 11px;
+    color: var(--text-tertiary);
+    background: #FFFBEB;
+    border: 1px dashed #FCD34D;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-family: var(--sans);
+    white-space: nowrap;
+  }
+  .anno::before {
+    content: '←';
+    margin-right: 6px;
+    color: var(--warn);
+  }
+
+  .preview-frame {
+    display: flex;
+    justify-content: center;
+  }
+</style>
+</head>
+<body>
+  <div class="page-title">FilterConfigDialog · Redesign Preview</div>
+
+  <div class="preview-frame">
+  <div class="drawer-frame" style="position: relative;">
+
+    <!-- Annotation: header -->
+    <div class="anno" style="top: 30px;">节点类型 + 标题 + 别名</div>
+
+    <div class="drawer-handle"></div>
+
+    <div class="drawer-header">
+      <div class="header-left">
+        <div class="node-icon">F</div>
+        <div>
+          <div class="header-title">过滤 · filter1</div>
+          <div class="header-sub">1 in · 1 out · 上游 source1</div>
+        </div>
+      </div>
+      <button class="close-btn">×</button>
+    </div>
+
+    <div class="drawer-body">
+
+      <!-- 1. Identity -->
+      <div class="section" style="position: relative;">
+        <div class="anno" style="top: 18px;">节点别名(必填,用于 SQL 子查询 AS)</div>
+        <div class="section-num">01</div>
+        <div class="section-title">节点别名</div>
+        <div class="section-hint">下游节点引用此节点时使用的名称</div>
+        <div class="alias-row">
+          <span class="alias-tag">alias</span>
+          <input class="alias-input" value="filter1" />
+          <span class="alias-valid">✓</span>
+        </div>
+      </div>
+
+      <!-- 2. Field Mapping -->
+      <div class="section" style="position: relative;">
+        <div class="anno" style="top: 18px;">一对一字段映射 · 每行右侧悬停出现删除按钮</div>
+        <div class="section-num">02</div>
+        <div class="section-title">字段映射</div>
+        <div class="section-hint">一对一映射,别名留空 = 沿用原名;不勾选 = 不输出该列</div>
+
+        <div class="map-table">
+          <div class="map-header">
+            <span></span>
+            <span>源字段 (upstream)</span>
+            <span></span>
+            <span>输出名 (alias)</span>
+            <span></span>
+          </div>
+          <div class="map-row">
+            <span class="map-checkbox checked">✓</span>
+            <span class="map-field-src">product_id</span>
+            <span class="map-arrow">→</span>
+            <input class="map-field-dst" value="pid" />
+            <button class="map-remove">×</button>
+          </div>
+          <div class="map-row">
+            <span class="map-checkbox checked">✓</span>
+            <span class="map-field-src">product_name</span>
+            <span class="map-arrow">→</span>
+            <input class="map-field-dst" value="user_name" />
+            <button class="map-remove">×</button>
+          </div>
+          <div class="map-row has-conflict">
+            <span class="map-checkbox checked">✓</span>
+            <span class="map-field-src">category</span>
+            <span class="map-arrow">→</span>
+            <div style="position: relative; width: 100%;">
+              <input class="map-field-dst error" value="" placeholder="输出名不能为空" />
+              <span class="conflict-badge">空</span>
+              <span class="conflict-tip">输出名不能为空</span>
+            </div>
+            <button class="map-remove">×</button>
+          </div>
+          <div class="map-row has-conflict">
+            <span class="map-checkbox checked">✓</span>
+            <span class="map-field-src">price</span>
+            <span class="map-arrow">→</span>
+            <div style="position: relative; width: 100%;">
+              <input class="map-field-dst error" value="user_name" />
+              <span class="conflict-badge">重名</span>
+              <span class="conflict-tip">与「product_name」的输出名冲突</span>
+            </div>
+            <button class="map-remove">×</button>
+          </div>
+          <div class="map-row">
+            <span class="map-checkbox"></span>
+            <span class="map-field-src dim">created_at</span>
+            <span class="map-arrow">→</span>
+            <input class="map-field-dst" placeholder="不输出此列" disabled />
+            <button class="map-remove">×</button>
+          </div>
+        </div>
+
+        <div class="map-actions">
+          <button class="action-link">+ 全选</button>
+          <button class="action-link muted">— 全不选</button>
+          <span class="map-count">2 / 5 合法输出</span>
+        </div>
+      </div>
+
+      <!-- 3. WHERE -->
+      <div class="section" style="position: relative;">
+        <div class="anno" style="top: 18px;">点击字段 token 插入到 WHERE 表达式</div>
+        <div class="section-num">03</div>
+        <div class="section-title">WHERE 过滤</div>
+        <div class="section-hint">未填写 = 不过滤</div>
+
+        <div class="where-shell">
+          <div class="where-tag-bar">
+            <span class="where-token">product_id</span>
+            <span class="where-token">product_name</span>
+            <span class="where-token">category</span>
+            <span class="where-token">price</span>
+          </div>
+          <textarea class="where-input">price &gt; 2000 AND category = 'electronics'</textarea>
+        </div>
+      </div>
+
+      <!-- 4. SQL Preview -->
+      <div class="section">
+        <div class="section-num">04</div>
+        <div class="section-title">SQL 预览</div>
+        <div class="section-hint">下游预览节点会用这段子查询</div>
+        <div style="font-size: 10.5px; color: var(--error); margin-bottom: 8px;">
+          ⚠ 仅展示合法列 · 「category」「price」因校验失败暂被忽略
+        </div>
+        <div class="preview-block">
+          <span class="preview-label">LIVE</span>
+<span class="kw">SELECT</span> <span class="col">product_id</span> <span class="kw">AS</span> <span class="col">pid</span>,
+       <span class="col">product_name</span> <span class="kw">AS</span> <span class="col">user_name</span>
+<span class="kw">FROM</span> (<span class="kw">SELECT</span> <span class="op">*</span> <span class="kw">FROM</span> <span class="tbl">source1</span>) <span class="kw">AS</span> <span class="tbl">upstream</span>
+<span class="kw">WHERE</span> <span class="col">price</span> <span class="op">&gt;</span> <span class="str">2000</span> <span class="kw">AND</span> <span class="col">category</span> <span class="op">=</span> <span class="str">'electronics'</span>
+<span class="cmt">-- 整体作为子查询,节点别名: filter1</span>
+        </div>
+      </div>
+
+    </div>
+
+    <div class="drawer-footer">
+      <div class="footer-meta">
+        <span style="color: var(--error);">●</span> 2 项错误待修复 · 3 列输出可用
+      </div>
+      <div class="footer-actions">
+        <button class="btn">取消</button>
+        <button class="btn primary disabled" disabled>保存</button>
+      </div>
+    </div>
+
+  </div>
+  </div>
+
+</body>
+</html>

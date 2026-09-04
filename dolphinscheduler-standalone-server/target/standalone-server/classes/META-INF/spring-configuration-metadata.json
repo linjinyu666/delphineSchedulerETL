@@ -1,0 +1,12 @@
+{
+  "groups": [
+    {
+      "name": "spring.datasource.hikari",
+      "type": "javax.sql.DataSource",
+      "sourceType": "org.apache.dolphinscheduler.PrimaryDataSourceConfig",
+      "sourceMethod": "dataSource(org.springframework.boot.autoconfigure.jdbc.DataSourceProperties)"
+    }
+  ],
+  "properties": [],
+  "hints": []
+}

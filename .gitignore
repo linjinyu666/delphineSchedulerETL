@@ -1,0 +1,109 @@
+# Build outputs (do NOT commit in general).
+**/target/
+**/dolphinscheduler-alert/target/
+**/dolphinscheduler-alert-server/target/
+**/dolphinscheduler-api/target/
+**/dolphinscheduler-api-test/target/
+**/dolphinscheduler-authentication/target/
+**/dolphinscheduler-bom/target/
+**/dolphinscheduler-common/target/
+**/dolphinscheduler-dao-plugin/target/
+**/dolphinscheduler-dao/target/
+**/dolphinscheduler-datasource-plugin/target/
+**/dolphinscheduler-dist/target/
+**/dolphinscheduler-e2e/target/
+**/dolphinscheduler-eventbus/target/
+**/dolphinscheduler-extract/target/
+**/dolphinscheduler-master/target/
+**/dolphinscheduler-meter/target/
+**/dolphinscheduler-microbench/target/
+**/dolphinscheduler-registry/target/
+**/dolphinscheduler-scheduler-plugin/target/
+**/dolphinscheduler-service/target/
+**/dolphinscheduler-spi/target/
+**/dolphinscheduler-standalone-server/target/
+**/dolphinscheduler-storage-plugin/target/
+**/dolphinscheduler-task-executor/target/
+**/dolphinscheduler-task-plugin/target/
+**/dolphinscheduler-tools/target/
+**/dolphinscheduler-worker/target/
+**/dolphinscheduler-yarn-aop/target/
+# Keep the top-level standalone target Maven output out of the tracked startup directory.
+**/dolphinscheduler-standalone-server/target/.plxarc
+**/dolphinscheduler-standalone-server/target/classes/
+**/dolphinscheduler-standalone-server/target/classes/**
+**/dolphinscheduler-standalone-server/target/*.jar
+**/dolphinscheduler-standalone-server/target/maven-archiver/
+**/dolphinscheduler-standalone-server/target/maven-shared-archive-resources/
+**/dolphinscheduler-standalone-server/target/maven-status/
+**/dolphinscheduler-standalone-server/target/spotless-index
+
+**/build/
+**/node_modules/
+**/.frontend-tools/
+
+# Working copy directories (not part of the repo).
+flink-etl_*/
+flink-etl_副本/
+
+# Re-include the hand-maintained standalone startup directory from the ignored target tree.
+!**/dolphinscheduler-standalone-server/target/
+!**/dolphinscheduler-standalone-server/target/standalone-server/
+
+# Ignore the standalone target's Maven build output after re-including its parent.
+**/dolphinscheduler-standalone-server/target/.plxarc
+**/dolphinscheduler-standalone-server/target/classes/
+**/dolphinscheduler-standalone-server/target/classes/**
+**/dolphinscheduler-standalone-server/target/*.jar
+**/dolphinscheduler-standalone-server/target/maven-archiver/
+**/dolphinscheduler-standalone-server/target/maven-shared-archive-resources/
+**/dolphinscheduler-standalone-server/target/maven-status/
+**/dolphinscheduler-standalone-server/target/spotless-index
+
+# Whitelist only the hand-maintained standalone startup files.
+!**/dolphinscheduler-standalone-server/target/standalone-server/classes/
+!**/dolphinscheduler-standalone-server/target/standalone-server/classes/**
+!**/dolphinscheduler-standalone-server/target/standalone-server/conf/
+!**/dolphinscheduler-standalone-server/target/standalone-server/conf/**
+!**/dolphinscheduler-standalone-server/target/standalone-server/run.sh
+!**/dolphinscheduler-standalone-server/target/standalone-server/sql
+
+# Runtime artefacts inside the whitelisted dev dir — do NOT commit.
+**/dolphinscheduler-standalone-server/target/standalone-server/logs/
+**/dolphinscheduler-standalone-server/target/standalone-server/logs/**
+**/dolphinscheduler-standalone-server/target/standalone-server/standalone.out
+**/dolphinscheduler-standalone-server/target/standalone-server/standalone.log
+**/dolphinscheduler-standalone-server/target/standalone-server/gc-*.log
+**/dolphinscheduler-standalone-server/target/standalone-server/.shade-cache/
+**/dolphinscheduler-standalone-server/target/standalone-server/.shade-cache/**
+**/dolphinscheduler-standalone-server/target/standalone-server/lib/
+**/dolphinscheduler-standalone-server/target/standalone-server/lib/**
+**/dolphinscheduler-standalone-server/target/standalone-server/libs/
+**/dolphinscheduler-standalone-server/target/standalone-server/libs/**
+**/dolphinscheduler-standalone-server/target/standalone-server/bin/
+**/dolphinscheduler-standalone-server/target/standalone-server/bin/**
+**/dolphinscheduler-standalone-server/target/standalone-server/ui/
+**/dolphinscheduler-standalone-server/target/standalone-server/ui/**
+**/dolphinscheduler-standalone-server/target/standalone-server/var/
+**/dolphinscheduler-standalone-server/target/standalone-server/var/**
+**/dolphinscheduler-standalone-server/target/standalone-server/test-bind.yaml
+
+# UI dist is committed (rebuilt artifact used by run.sh).
+!**/dolphinscheduler-ui/dist/
+!**/dolphinscheduler-ui/dist/**
+**/__pycache__/
+**/__pycache__/**
+**/*.py[cod]
+
+# IDE
+**/.idea/
+**/*.iml
+**/.vscode/
+**/.DS_Store
+**/dependency-reduced-pom.xml
+**/local.properties
+
+# Java class files (general)
+**/*.class
+# Whitelist: our patch class that extends Spring Boot auto-config.
+!**/dolphinscheduler-standalone-server/target/standalone-server/classes/org/apache/dolphinscheduler/PrimaryDataSourceConfig.class

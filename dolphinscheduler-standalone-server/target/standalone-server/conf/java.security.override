@@ -1,0 +1,1 @@
+authconfigprovider.factory=org.apache.catalina.authenticator.jaspic.AuthConfigFactoryImpl

@@ -1,0 +1,940 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<title>CompareConfigDialog · 终稿 · 与 FilterConfigDialog 风格一致</title>
+<style>
+  /* ============================================
+     严格对齐 FilterConfigDialog (fcd-) 设计语言
+     - 主色:teal #0D9488 (跟 filter 一致,体现同一组件家族)
+     - 节点 chip 色:orange #F97316 (语义色:对比)
+     - 字体:SF Mono / Inter
+     - 6px 圆角 / E7E5E0 border / F5F5F4 muted
+     ============================================ */
+  :root {
+    --bg: #FAFAF9;
+    --bg-elevated: #FFFFFF;
+    --bg-muted: #F5F5F4;
+    --bg-subtle: #EFEEEC;
+    --border: #E7E5E0;
+    --border-strong: #D6D3CD;
+    --text-primary: #1C1917;
+    --text-secondary: #57534E;
+    --text-tertiary: #A8A29E;
+    --text-quaternary: #D6D3CD;
+    /* teal (跟 filter 完全一致) */
+    --teal: #0D9488;
+    --teal-soft: #CCFBF1;
+    --teal-glow: rgba(13, 148, 136, 0.08);
+    --teal-deep: #0F766E;
+    /* orange (节点 chip 用) */
+    --orange: #F97316;
+    --orange-soft: #FFEDD5;
+    --orange-deep: #C2410C;
+    /* 对比结果语义色 (跟配置 toggle 一致) */
+    --op-add: #16A34A;        /* green-600 + */
+    --op-del: #DC2626;        /* red-600  - */
+    --op-mod: #F59E0B;        /* amber-500 ~ */
+    --op-same: #94A3B8;       /* slate-400 = */
+    /* SRC / TGT 角色色 */
+    --src-color: #1D4ED8;     /* blue-700 */
+    --src-soft: #DBEAFE;      /* blue-100 */
+    --tgt-color: #7C3AED;     /* violet-600 */
+    --tgt-soft: #EDE9FE;      /* violet-100 */
+    /* 字体 (跟 filter 完全一致) */
+    --mono: 'SF Mono', 'JetBrains Mono', Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', sans-serif;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    font-family: var(--sans);
+    background: #E8E6E1;
+    color: var(--text-primary);
+    min-height: 100vh;
+    padding: 32px 20px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .page-title {
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    color: var(--text-tertiary);
+    margin-bottom: 20px;
+    font-weight: 500;
+  }
+
+  .preview-frame { display: flex; justify-content: center; }
+
+  /* ============== Drawer Container ============== */
+  .ccd-drawer {
+    width: 100%;
+    max-width: 720px;
+    margin: 0 auto;
+    background: var(--bg-elevated);
+    border-radius: 8px;
+    box-shadow: 0 8px 24px rgba(28, 25, 23, 0.08), 0 2px 6px rgba(28, 25, 23, 0.04);
+    overflow: hidden;
+    position: relative;
+    /* 微妙的 radial 角光晕(对齐 filter 风格) */
+    background-image:
+      radial-gradient(circle at 100% 0%, rgba(249, 115, 22, 0.025), transparent 35%),
+      radial-gradient(circle at 0% 100%, rgba(13, 148, 136, 0.018), transparent 35%);
+  }
+
+  /* ============== Header ============== */
+  .ccd-header {
+    padding: 16px 24px 14px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .ccd-header-left {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ccd-node-chip {
+    width: 32px;
+    height: 32px;
+    border-radius: 6px;
+    background: linear-gradient(135deg, var(--orange) 0%, #EA580C 100%);
+    display: grid;
+    place-items: center;
+    color: white;
+    font-family: var(--mono);
+    font-size: 14px;
+    font-weight: 600;
+    box-shadow: 0 1px 2px rgba(249, 115, 22, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.25);
+  }
+  .ccd-header-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+  .ccd-header-sub {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 2px;
+    font-family: var(--mono);
+  }
+  .ccd-header-right {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ccd-status-tag {
+    font-family: var(--mono);
+    font-size: 10px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    background: var(--teal-soft);
+    color: var(--teal-deep);
+    font-weight: 600;
+  }
+  .ccd-close {
+    width: 24px;
+    height: 24px;
+    border-radius: 4px;
+    background: transparent;
+    border: none;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    display: grid;
+    place-items: center;
+    font-size: 16px;
+    transition: all 0.1s;
+  }
+  .ccd-close:hover { background: var(--bg-muted); color: var(--text-primary); }
+
+  /* ============== Upstream Strip (2 in) ============== */
+  .ccd-upstream {
+    padding: 12px 24px;
+    background: var(--bg);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+  }
+  .ccd-up-card {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    transition: border 0.15s;
+  }
+  .ccd-up-card:hover { border-color: var(--border-strong); }
+  .ccd-up-role {
+    display: inline-flex;
+    background: var(--bg-muted);
+    border-radius: 3px;
+    padding: 1px;
+    border: 1px solid var(--border);
+    flex-shrink: 0;
+  }
+  .ccd-up-role button {
+    font-family: var(--mono);
+    font-size: 9px;
+    font-weight: 600;
+    padding: 3px 7px;
+    border-radius: 2px;
+    border: none;
+    background: transparent;
+    color: var(--text-tertiary);
+    cursor: pointer;
+    letter-spacing: 0.04em;
+    transition: all 0.1s;
+  }
+  .ccd-up-role button:hover { color: var(--text-secondary); }
+  .ccd-up-role button.active.src {
+    background: var(--src-soft);
+    color: var(--src-color);
+  }
+  .ccd-up-role button.active.tgt {
+    background: var(--tgt-soft);
+    color: var(--tgt-color);
+  }
+  .ccd-up-alias {
+    font-family: var(--mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+    flex: 1;
+  }
+  .ccd-up-fields {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+  }
+  .ccd-swap {
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: var(--bg-elevated);
+    border: 1.5px solid var(--orange);
+    color: var(--orange-deep);
+    display: grid;
+    place-items: center;
+    font-size: 13px;
+    font-weight: 700;
+    cursor: pointer;
+    flex-shrink: 0;
+    transition: all 0.2s;
+    font-family: var(--mono);
+  }
+  .ccd-swap:hover {
+    background: var(--orange-soft);
+    transform: rotate(180deg);
+  }
+
+  /* ============== Section ============== */
+  .ccd-section {
+    padding: 18px 24px;
+    border-bottom: 1px solid var(--border);
+  }
+  .ccd-section:last-child { border-bottom: none; }
+  .ccd-section-num {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-quaternary);
+    letter-spacing: 0.1em;
+    margin-bottom: 4px;
+  }
+  .ccd-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+    letter-spacing: -0.01em;
+  }
+  .ccd-section-hint {
+    font-size: 11px;
+    color: var(--text-tertiary);
+    margin-top: 3px;
+    margin-bottom: 14px;
+    line-height: 1.4;
+  }
+
+  /* ============== Identity row (alias + key) ============== */
+  .ccd-identity-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+  }
+  .ccd-field-input {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0 10px;
+    transition: all 0.15s;
+  }
+  .ccd-field-input:focus-within {
+    border-color: var(--teal);
+    box-shadow: 0 0 0 3px var(--teal-glow);
+    background: var(--bg-elevated);
+  }
+  .ccd-field-icon {
+    width: 18px;
+    height: 18px;
+    display: grid;
+    place-items: center;
+    color: var(--text-tertiary);
+    font-size: 11px;
+    font-family: var(--mono);
+  }
+  .ccd-field-input input {
+    flex: 1;
+    border: none;
+    background: transparent;
+    padding: 10px 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    color: var(--text-primary);
+    outline: none;
+  }
+  .ccd-field-input input::placeholder { color: var(--text-quaternary); }
+  .ccd-valid {
+    width: 16px;
+    height: 16px;
+    border-radius: 50%;
+    background: var(--teal);
+    color: white;
+    display: grid;
+    place-items: center;
+    font-size: 10px;
+    font-weight: bold;
+  }
+
+  /* ============== Map table (跟 filter 完全一致,加 KEY 列) ============== */
+  .ccd-map-table {
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+    background: var(--bg-elevated);
+  }
+  .ccd-map-header {
+    display: grid;
+    grid-template-columns: 36px 1fr 14px 1fr 32px;
+    padding: 8px 10px;
+    background: var(--bg-muted);
+    border-bottom: 1px solid var(--border);
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .ccd-map-header .l-h { color: var(--src-color); }
+  .ccd-map-header .r-h { color: var(--tgt-color); }
+  .ccd-map-header .center {
+    text-align: center;
+  }
+
+  .ccd-map-row {
+    display: grid;
+    grid-template-columns: 36px 1fr 14px 1fr 32px;
+    padding: 8px 10px;
+    align-items: center;
+    border-bottom: 1px solid var(--border);
+    transition: background 0.1s;
+    position: relative;
+  }
+  .ccd-map-row:last-child { border-bottom: none; }
+  .ccd-map-row:hover { background: var(--bg); }
+  .ccd-map-row.has-conflict { background: #FEF2F2; }
+
+  /* KEY 行有橙色背景(对齐 filter 的 dim行,但用橙色高亮 KEY) */
+  .ccd-map-row.is-key {
+    background: linear-gradient(90deg, rgba(249, 115, 22, 0.04), rgba(249, 115, 22, 0.02));
+  }
+  .ccd-map-row.is-key:hover {
+    background: linear-gradient(90deg, rgba(249, 115, 22, 0.07), rgba(249, 115, 22, 0.04));
+  }
+  /* 右表缺字段 */
+  .ccd-map-row.is-mismatch {
+    background: #FEF2F2;
+  }
+  /* 不勾选(对比 filter) */
+  .ccd-map-row.disabled { background: var(--bg); }
+  .ccd-map-row.disabled .ccd-map-field,
+  .ccd-map-row.disabled .ccd-map-arrow {
+    color: var(--text-tertiary);
+    text-decoration: line-through;
+    text-decoration-color: var(--text-tertiary);
+    text-decoration-thickness: 1px;
+  }
+  .ccd-map-row.disabled .ccd-map-field {
+    background: var(--bg-subtle);
+  }
+  .ccd-map-row.disabled .ccd-map-checkbox {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+  .ccd-map-row.disabled .ccd-map-checkbox:not(.checked) {
+    background: var(--bg);
+  }
+
+  /* KEY 专属 checkbox (orange) */
+  .ccd-key-checkbox {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1.5px solid var(--border-strong);
+    background: var(--bg-elevated);
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    color: white;
+    font-family: var(--mono);
+    font-size: 9px;
+    line-height: 1;
+    transition: all 0.1s;
+  }
+  .ccd-key-checkbox.is-key {
+    background: var(--orange);
+    border-color: var(--orange);
+  }
+  .ccd-key-checkbox.is-key::before {
+    content: '🔑';
+    font-size: 9px;
+    filter: brightness(0) invert(1);
+  }
+  .ccd-map-field {
+    font-family: var(--mono);
+    font-size: 12px;
+    color: var(--text-primary);
+    padding: 4px 8px;
+    background: var(--bg-muted);
+    border-radius: 4px;
+  }
+  .ccd-map-field.r {
+    background: rgba(13, 148, 136, 0.06);
+    border: 1px solid rgba(13, 148, 136, 0.18);
+  }
+  .ccd-map-field.r.missing {
+    background: rgba(220, 38, 38, 0.06);
+    border-color: rgba(220, 38, 38, 0.3);
+    color: var(--op-del);
+    text-decoration: line-through;
+    text-decoration-color: rgba(220, 38, 38, 0.5);
+  }
+  .ccd-map-arrow {
+    text-align: center;
+    color: var(--border-strong);
+    font-size: 12px;
+  }
+  /* 配对状态 marker */
+  .ccd-map-marker {
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    display: grid;
+    place-items: center;
+    color: white;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 700;
+    margin: 0 auto;
+  }
+  .ccd-map-marker.matched { background: var(--teal); }
+  .ccd-map-marker.missing { background: var(--op-del); }
+
+  /* ============== Actions row (跟 filter 一致) ============== */
+  .ccd-map-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-top: 10px;
+  }
+  .ccd-action-link {
+    font-size: 11px;
+    color: var(--teal);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    padding: 4px 6px;
+    border-radius: 4px;
+    transition: background 0.1s;
+    font-weight: 500;
+  }
+  .ccd-action-link:hover { background: var(--teal-soft); }
+  .ccd-action-link.muted { color: var(--text-tertiary); }
+  .ccd-action-link.muted:hover {
+    background: var(--bg-muted);
+    color: var(--text-secondary);
+  }
+  .ccd-map-count {
+    font-family: var(--mono);
+    font-size: 10px;
+    color: var(--text-tertiary);
+    padding: 2px 6px;
+    background: var(--bg-muted);
+    border-radius: 3px;
+  }
+
+  /* ============== Output toggles ============== */
+  .ccd-toggle-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .ccd-toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 10px 12px;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.1s;
+  }
+  .ccd-toggle.on {
+    background: var(--bg-elevated);
+    border-color: var(--border-strong);
+  }
+  .ccd-toggle:hover { border-color: var(--border-strong); }
+  .ccd-toggle-icon {
+    width: 26px;
+    height: 26px;
+    border-radius: 5px;
+    display: grid;
+    place-items: center;
+    color: white;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+  .ccd-toggle-icon.add { background: var(--op-add); }
+  .ccd-toggle-icon.del { background: var(--op-del); }
+  .ccd-toggle-icon.mod { background: var(--op-mod); }
+  .ccd-toggle-icon.same { background: var(--op-same); }
+  .ccd-toggle-text {
+    flex: 1;
+  }
+  .ccd-toggle-text .zh {
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+  .ccd-toggle-text .en {
+    font-size: 10px;
+    color: var(--text-tertiary);
+    font-family: var(--mono);
+    margin-top: 2px;
+  }
+  .ccd-toggle-switch {
+    width: 28px;
+    height: 16px;
+    border-radius: 8px;
+    background: var(--border-strong);
+    position: relative;
+    transition: background 0.15s;
+    flex-shrink: 0;
+  }
+  .ccd-toggle-switch::after {
+    content: '';
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    width: 12px;
+    height: 12px;
+    border-radius: 50%;
+    background: white;
+    transition: transform 0.15s;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.15);
+  }
+  .ccd-toggle.on .ccd-toggle-switch { background: var(--teal); }
+  .ccd-toggle.on .ccd-toggle-switch::after { transform: translateX(12px); }
+
+  /* ============== SQL Preview (跟 filter 完全一致) ============== */
+  .ccd-preview-block {
+    background: #1A1A1A;
+    border-radius: 6px;
+    padding: 12px 14px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    line-height: 1.6;
+    color: #E5E5E5;
+    overflow-x: auto;
+    position: relative;
+    margin: 0;
+    white-space: pre-wrap;
+    word-break: break-all;
+  }
+  .ccd-preview-label {
+    position: absolute;
+    top: 8px;
+    right: 10px;
+    font-size: 9px;
+    font-family: var(--sans);
+    color: rgba(255, 255, 255, 0.3);
+    letter-spacing: 0.15em;
+    text-transform: uppercase;
+  }
+  .kw  { color: #C084FC; }
+  .fn  { color: #67E8F9; }
+  .str { color: #86EFAC; }
+  .col { color: #FCD34D; }
+  .op  { color: #F472B6; }
+  .cmt { color: #6B7280; font-style: italic; }
+  .tbl { color: #F9A8D4; }
+  .num { color: #FB923C; }
+
+  /* ============== Footer ============== */
+  .ccd-footer {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 24px;
+    background: var(--bg);
+    border-top: 1px solid var(--border);
+  }
+  .ccd-footer-meta {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    color: var(--text-tertiary);
+  }
+  .ccd-footer-meta .ok { color: var(--teal); }
+  .ccd-footer-meta .bad { color: #B91C1C; }
+  .ccd-footer-meta .sep { color: var(--text-quaternary); margin: 0 4px; }
+  .ccd-footer-actions { display: flex; gap: 8px; }
+  .ccd-btn {
+    padding: 7px 14px;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    border: 1px solid var(--border-strong);
+    background: var(--bg-elevated);
+    color: var(--text-secondary);
+    cursor: pointer;
+    font-family: var(--sans);
+    transition: all 0.1s;
+  }
+  .ccd-btn:hover { background: var(--bg-muted); }
+  .ccd-btn.primary {
+    background: var(--text-primary);
+    color: var(--bg-elevated);
+    border-color: var(--text-primary);
+  }
+  .ccd-btn.primary:hover {
+    background: #000;
+  }
+</style>
+</head>
+<body>
+  <div class="page-title">CompareConfigDialog · 终稿预览</div>
+  <div class="preview-frame">
+    <div class="ccd-drawer">
+
+      <!-- ============== HEADER ============== -->
+      <div class="ccd-header">
+        <div class="ccd-header-left">
+          <div class="ccd-node-chip">⊟</div>
+          <div>
+            <div class="ccd-header-title">数据比对 · compare1</div>
+            <div class="ccd-header-sub">2 in · 1 out · FULL OUTER JOIN</div>
+          </div>
+        </div>
+        <div class="ccd-header-right">
+          <span class="ccd-status-tag">● 已配置</span>
+          <button class="ccd-close">×</button>
+        </div>
+      </div>
+
+      <!-- ============== UPSTREAM STRIP ============== -->
+      <div class="ccd-upstream">
+        <div class="ccd-up-card">
+          <div class="ccd-up-role">
+            <button class="active src" data-role="src" data-slot="1">SRC</button>
+            <button data-role="tgt" data-slot="1">TGT</button>
+          </div>
+          <span class="ccd-up-alias" id="alias-1">orders_yesterday</span>
+          <span class="ccd-up-fields">6 字段</span>
+        </div>
+        <button class="ccd-swap" id="swap-btn" title="交换源/目标">⇄</button>
+        <div class="ccd-up-card">
+          <div class="ccd-up-role">
+            <button data-role="src" data-slot="2">SRC</button>
+            <button class="active tgt" data-role="tgt" data-slot="2">TGT</button>
+          </div>
+          <span class="ccd-up-alias" id="alias-2">orders_today</span>
+          <span class="ccd-up-fields">6 字段</span>
+        </div>
+      </div>
+
+      <!-- ============== 01. 基本信息 ============== -->
+      <div class="ccd-section">
+        <div class="ccd-section-num">01</div>
+        <div class="ccd-section-title">基本配置</div>
+        <div class="ccd-section-hint">节点别名(下游引用)与主键字段(用于两表关联)</div>
+        <div class="ccd-identity-grid">
+          <div class="ccd-field-input">
+            <span class="ccd-field-icon">alias</span>
+            <input value="compare1" />
+            <span class="ccd-valid">✓</span>
+          </div>
+          <div class="ccd-field-input">
+            <span class="ccd-field-icon">🔑</span>
+            <input value="id" placeholder="id 或 id,tenant_id" />
+            <span class="ccd-valid">✓</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== 02. 字段映射 ============== -->
+      <div class="ccd-section">
+        <div class="ccd-section-num">02</div>
+        <div class="ccd-section-title">字段映射</div>
+        <div class="ccd-section-hint">
+          <span id="hint-l-side" style="color: var(--src-color); font-weight: 600;">SRC</span>
+          ↔ <span id="hint-r-side" style="color: var(--tgt-color); font-weight: 600;">TGT</span> 同名字段自动配对 · 不勾选 = 不参与比对
+        </div>
+
+        <div class="ccd-map-table">
+          <div class="ccd-map-header">
+            <span class="center">KEY</span>
+            <span class="l-h" id="map-l-h">SRC · orders_yesterday</span>
+            <span class="center">=</span>
+            <span class="r-h" id="map-r-h">TGT · orders_today</span>
+            <span></span>
+          </div>
+
+          <!-- id: KEY -->
+          <div class="ccd-map-row is-key" data-row="id">
+            <span class="ccd-key-checkbox is-key" title="主键"></span>
+            <span class="ccd-map-field">id</span>
+            <span class="ccd-map-arrow">=</span>
+            <span class="ccd-map-field r">id</span>
+            <span class="ccd-map-marker matched">✓</span>
+          </div>
+
+          <!-- user_id -->
+          <div class="ccd-map-row" data-row="user_id">
+            <span class="ccd-key-checkbox"></span>
+            <span class="ccd-map-field">user_id</span>
+            <span class="ccd-map-arrow">=</span>
+            <span class="ccd-map-field r">user_id</span>
+            <span class="ccd-map-marker matched">✓</span>
+          </div>
+
+          <!-- amount -->
+          <div class="ccd-map-row" data-row="amount">
+            <span class="ccd-key-checkbox"></span>
+            <span class="ccd-map-field">amount</span>
+            <span class="ccd-map-arrow">=</span>
+            <span class="ccd-map-field r">amount</span>
+            <span class="ccd-map-marker matched">✓</span>
+          </div>
+
+          <!-- status: 右表缺失 -->
+          <div class="ccd-map-row is-mismatch" data-row="status">
+            <span class="ccd-key-checkbox"></span>
+            <span class="ccd-map-field">status</span>
+            <span class="ccd-map-arrow">=</span>
+            <span class="ccd-map-field r missing">不存在</span>
+            <span class="ccd-map-marker missing">!</span>
+          </div>
+
+          <!-- created_at: 不勾选 -->
+          <div class="ccd-map-row disabled" data-row="created_at">
+            <span class="ccd-key-checkbox"></span>
+            <span class="ccd-map-field">created_at</span>
+            <span class="ccd-map-arrow">=</span>
+            <span class="ccd-map-field r">created_at</span>
+            <span></span>
+          </div>
+        </div>
+
+        <!-- 操作栏 (跟 filter 一致) -->
+        <div class="ccd-map-actions">
+          <button class="ccd-action-link">+ 全选</button>
+          <button class="ccd-action-link muted">− 全不选</button>
+          <span class="ccd-map-count">3 / 5 参与比对</span>
+        </div>
+      </div>
+
+      <!-- ============== 03. 输出配置 ============== -->
+      <div class="ccd-section">
+        <div class="ccd-section-num">03</div>
+        <div class="ccd-section-title">输出哪些差异行</div>
+        <div class="ccd-section-hint">每行带 cmp_op 标记 · 默认仅输出 +/−/~,关闭 = 一致行</div>
+
+        <div class="ccd-toggle-grid">
+          <div class="ccd-toggle on" data-op="add">
+            <span class="ccd-toggle-icon add">+</span>
+            <div class="ccd-toggle-text">
+              <div class="zh">新增</div>
+              <div class="en">ADDED · TGT 存在 SRC 无</div>
+            </div>
+            <div class="ccd-toggle-switch"></div>
+          </div>
+          <div class="ccd-toggle on" data-op="del">
+            <span class="ccd-toggle-icon del">−</span>
+            <div class="ccd-toggle-text">
+              <div class="zh">删除</div>
+              <div class="en">DELETED · SRC 存在 TGT 无</div>
+            </div>
+            <div class="ccd-toggle-switch"></div>
+          </div>
+          <div class="ccd-toggle on" data-op="mod">
+            <span class="ccd-toggle-icon mod">~</span>
+            <div class="ccd-toggle-text">
+              <div class="zh">修改</div>
+              <div class="en">CHANGED · 内容不一致</div>
+            </div>
+            <div class="ccd-toggle-switch"></div>
+          </div>
+          <div class="ccd-toggle" data-op="same">
+            <span class="ccd-toggle-icon same">=</span>
+            <div class="ccd-toggle-text">
+              <div class="zh">一致</div>
+              <div class="en">UNCHANGED · 完全相同</div>
+            </div>
+            <div class="ccd-toggle-switch"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ============== 04. SQL 预览 ============== -->
+      <div class="ccd-section">
+        <div class="ccd-section-num">04</div>
+        <div class="ccd-section-title">SQL 预览</div>
+        <div class="ccd-section-hint">下游预览节点将作为子查询消费此结果</div>
+        <pre class="ccd-preview-block" id="sql-preview">
+<span class="ccd-preview-label">LIVE</span><span class="cmt">-- SRC = <span id="sql-src-name">orders_yesterday</span> · TGT = <span id="sql-tgt-name">orders_today</span></span>
+<span class="kw">WITH</span>
+  <span class="tbl">src</span> <span class="kw">AS</span> (<span class="kw">SELECT</span> id, user_id, amount <span class="kw">FROM</span> <span class="tbl" id="sql-src-tbl">orders_yesterday</span>),
+  <span class="tbl">tgt</span> <span class="kw">AS</span> (<span class="kw">SELECT</span> id, user_id, amount <span class="kw">FROM</span> <span class="tbl" id="sql-tgt-tbl">orders_today</span>)
+<span class="kw">SELECT</span>
+  <span class="kw">CASE</span>
+    <span class="kw">WHEN</span> <span class="tbl">src</span>.id <span class="kw">IS</span> <span class="kw">NULL</span>              <span class="kw">THEN</span> <span class="str">'+'</span>  <span class="cmt">-- TGT 新增</span>
+    <span class="kw">WHEN</span> <span class="tbl">tgt</span>.id <span class="kw">IS</span> <span class="kw">NULL</span>              <span class="kw">THEN</span> <span class="str">'-'</span>  <span class="cmt">-- SRC 存在但 TGT 删除</span>
+    <span class="kw">WHEN</span> <span class="tbl">src</span>.user_id <span class="op">&lt;&gt;</span> <span class="tbl">tgt</span>.user_id
+      <span class="kw">OR</span> <span class="tbl">src</span>.amount   <span class="op">&lt;&gt;</span> <span class="tbl">tgt</span>.amount <span class="kw">THEN</span> <span class="str">'~'</span>  <span class="cmt">-- 修改</span>
+    <span class="kw">ELSE</span>                                          <span class="str">'='</span>
+  <span class="kw">END</span> <span class="kw">AS</span> <span class="col">cmp_op</span>,
+  <span class="fn">COALESCE</span>(<span class="tbl">src</span>.id, <span class="tbl">tgt</span>.id) <span class="kw">AS</span> <span class="col">cmp_id</span>,
+  <span class="tbl">src</span>.*, <span class="tbl">tgt</span>.*
+<span class="kw">FROM</span> <span class="tbl">src</span> <span class="kw">FULL</span> <span class="kw">OUTER</span> <span class="kw">JOIN</span> <span class="tbl">tgt</span> <span class="kw">ON</span> <span class="tbl">src</span>.id = <span class="tbl">tgt</span>.id
+<span class="kw">WHERE</span> <span class="col">cmp_op</span> <span class="kw">IN</span> (<span class="str">'+'</span>, <span class="str">'-'</span>, <span class="str">'~'</span>)
+</pre>
+      </div>
+
+      <!-- ============== FOOTER ============== -->
+      <div class="ccd-footer">
+        <div class="ccd-footer-meta" id="footer-meta">
+          <span class="ok">●</span>
+          <span id="footer-src">SRC = orders_yesterday</span><span class="sep">·</span>
+          <span id="footer-tgt">TGT = orders_today</span><span class="sep">·</span>
+          <span>1 KEY</span><span class="sep">·</span>
+          <span>3 字段比对</span><span class="sep">·</span>
+          <span class="bad">1 字段缺失</span>
+        </div>
+        <div class="ccd-footer-actions">
+          <button class="ccd-btn">取消</button>
+          <button class="ccd-btn primary">保存</button>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+  // ====== swap 互动:点击 ⇄ 或 SRC/TGT 按钮都会同步更新 ======
+  const state = {
+    slot1: { alias: 'orders_yesterday', role: 'src' },
+    slot2: { alias: 'orders_today',     role: 'tgt' }
+  };
+
+  function apply() {
+    const s1 = state.slot1, s2 = state.slot2;
+
+    // 1) 上游卡 alias
+    document.getElementById('alias-1').textContent = s1.alias;
+    document.getElementById('alias-2').textContent = s2.alias;
+
+    // 2) 角色按钮高亮
+    [['1', s1], ['2', s2]].forEach(([slot, st]) => {
+      document.querySelectorAll(`[data-slot="${slot}"][data-role]`).forEach((b) => {
+        const isActive = b.dataset.role === st.role;
+        b.classList.toggle('active', isActive);
+        b.classList.toggle('src', b.dataset.role === 'src');
+        b.classList.toggle('tgt', b.dataset.role === 'tgt');
+        // 但 active 只显示对应颜色
+      });
+    });
+
+    // 3) 字段映射 header + hint
+    const lTag = s1.role === 'src' ? 'SRC' : 'TGT';
+    const rTag = s2.role === 'src' ? 'SRC' : 'TGT';
+    document.getElementById('map-l-h').textContent =
+      `${lTag} · ${s1.alias}`;
+    document.getElementById('map-r-h').textContent =
+      `${rTag} · ${s2.alias}`;
+    document.getElementById('hint-l-side').textContent = lTag;
+    document.getElementById('hint-r-side').textContent = rTag;
+
+    // 4) SQL 预览 FROM 表名
+    const srcAlias = s1.role === 'src' ? s1.alias : s2.alias;
+    const tgtAlias = s2.role === 'tgt' ? s2.alias : s1.alias;
+    document.getElementById('sql-src-name').textContent = srcAlias;
+    document.getElementById('sql-tgt-name').textContent = tgtAlias;
+    document.getElementById('sql-src-tbl').textContent  = srcAlias;
+    document.getElementById('sql-tgt-tbl').textContent  = tgtAlias;
+
+    // 5) footer
+    document.getElementById('footer-src').textContent = 'SRC = ' + srcAlias;
+    document.getElementById('footer-tgt').textContent = 'TGT = ' + tgtAlias;
+  }
+
+  // ⇄ 按钮
+  document.getElementById('swap-btn').addEventListener('click', () => {
+    [state.slot1.role, state.slot2.role] = [state.slot2.role, state.slot1.role];
+    apply();
+  });
+
+  // SRC/TGT 按钮
+  document.querySelectorAll('.ccd-up-role button').forEach((b) => {
+    b.addEventListener('click', () => {
+      const slot = b.dataset.slot;
+      const role = b.dataset.role;
+      if (state['slot' + slot].role === role) return;
+      const other = slot === '1' ? '2' : '1';
+      state['slot' + slot].role = role;
+      state['slot' + other].role = role === 'src' ? 'tgt' : 'src';
+      apply();
+    });
+  });
+
+  // KEY checkbox
+  document.querySelectorAll('.ccd-key-checkbox').forEach((cb) => {
+    cb.addEventListener('click', (e) => {
+      e.stopPropagation();
+      cb.classList.toggle('is-key');
+      cb.closest('.ccd-map-row').classList.toggle('is-key', cb.classList.contains('is-key'));
+    });
+  });
+
+  // output toggle
+  document.querySelectorAll('.ccd-toggle').forEach((t) => {
+    t.addEventListener('click', () => t.classList.toggle('on'));
+  });
+
+  apply();
+</script>
+</body>
+</html>

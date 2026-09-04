@@ -1,0 +1,1 @@
+import{u}from"./index.291055ec.js";function l(t){var o;const{t:n}=u(),e=n("project.list.total_items"),c=Number.prototype.toLocaleString.call((o=t==null?void 0:t.itemCount)!=null?o:0);return`${e}: ${c}`}export{l as t};
