@@ -49,6 +49,10 @@ const props = {
       description: '',
       user_name: ''
     }
+  },
+  resourceType: {
+    type: String as PropType<string>,
+    default: undefined
   }
 }
 
@@ -71,7 +75,19 @@ export default defineComponent({
       fullName: string
       user_name: string
       alias: string
+      type?: string
     }) => {
+      const isEtlResource =
+        item.type === 'ETL' ||
+        props.resourceType === 'ETL' ||
+        item.fullName.includes('/etl/')
+      if (isEtlResource) {
+        const fileName = item.fullName.split('/').pop() || item.alias
+        const name = fileName.replace(/\.pipeline$/, '').replace(/\.json$/, '')
+        const prefix = item.fullName.replace(/[^/]+$/, '')
+        router.push({ name: 'etl-designer', query: { name, prefix } })
+        return
+      }
       router.push({
         name: 'resource-file-edit',
         query: {
@@ -129,14 +145,21 @@ export default defineComponent({
                 <NButton
                   size='tiny'
                   type='info'
-                  disabled={this.rtDisb(this.row.name, this.row.size)}
+                  disabled={
+                    this.row.type === 'ETL' ||
+                    this.resourceType === 'ETL' ||
+                    this.row.fullName.includes('/etl/')
+                      ? false
+                      : this.rtDisb(this.row.name, this.row.size)
+                  }
                   tag='div'
-                  onClick={() => {
-                    this.handleEditFile({
-                      fullName: this.row.fullName,
-                      user_name: this.row.user_name,
-                      alias: this.row.alias
-                    })
+                      onClick={() => {
+                        this.handleEditFile({
+                          fullName: this.row.fullName,
+                          user_name: this.row.user_name,
+                          alias: this.row.alias,
+                          type: this.row.type
+                        })
                   }}
                   style={{ marginRight: '-5px' }}
                   circle

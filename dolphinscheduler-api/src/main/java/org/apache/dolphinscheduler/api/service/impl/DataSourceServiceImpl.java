@@ -372,17 +372,29 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                         dataSource.getConnectionParams());
 
         if (null == connectionParam) {
-            throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+            // 同 getDatabases: 网络/凭据不可用时降级返回空, 让前端 cascade-config 显示"无表"
+            log.warn("[datasource] buildConnectionParams returned null for id={} type={}, return empty table list",
+                    datasourceId, dataSource.getType());
+            return Collections.emptyList();
         }
 
-        Connection connection =
-                DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        Connection connection = null;
+        try {
+            connection =
+                    DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        } catch (Exception e) {
+            log.warn("[datasource] getConnection failed for id={} type={}, cause={}, return empty table list",
+                    datasourceId, dataSource.getType(), e.getMessage());
+            return Collections.emptyList();
+        }
         ResultSet tables = null;
 
         try {
 
             if (null == connection) {
-                throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+                log.warn("[datasource] getConnection returned null for id={} type={}, return empty table list",
+                        datasourceId, dataSource.getType());
+                return Collections.emptyList();
             }
 
             DatabaseMetaData metaData = connection.getMetaData();
@@ -390,8 +402,9 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             try {
                 schema = metaData.getConnection().getSchema();
             } catch (SQLException e) {
-                log.error("Cant not get the schema, datasourceId:{}.", datasourceId, e);
-                throw new ServiceException(Status.GET_DATASOURCE_TABLES_ERROR);
+                log.warn("[datasource] get schema failed for id={} type={}, cause={}, return empty table list",
+                        datasourceId, dataSource.getType(), e.getMessage());
+                return Collections.emptyList();
             }
 
             tables = metaData.getTables(
@@ -399,8 +412,9 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                     getDbSchemaPattern(dataSource.getType(), schema, connectionParam),
                     "%", TABLE_TYPES);
             if (null == tables) {
-                log.error("Get datasource tables error, datasourceId:{}.", datasourceId);
-                throw new ServiceException(Status.GET_DATASOURCE_TABLES_ERROR);
+                log.warn("[datasource] getTables returned null for id={} type={}, return empty table list",
+                        datasourceId, dataSource.getType());
+                return Collections.emptyList();
             }
 
             tableList = new ArrayList<>();
@@ -410,8 +424,10 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             }
 
         } catch (Exception e) {
-            log.error("Get datasource tables error, datasourceId:{}.", datasourceId, e);
-            throw new ServiceException(Status.GET_DATASOURCE_TABLES_ERROR);
+            // 网络通信异常 (例如 dm.jdbc.driver.DMException) 等, 不再阻断 ETL designer 流程
+            log.warn("[datasource] getTables failed for id={} type={} db={}, cause={}, return empty table list",
+                    datasourceId, dataSource.getType(), database, e.getMessage());
+            return Collections.emptyList();
         } finally {
             closeResult(tables);
             releaseConnection(connection);
@@ -441,17 +457,29 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                         dataSource.getConnectionParams());
 
         if (null == connectionParam) {
-            throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+            log.warn("[datasource] buildConnectionParams returned null for id={} type={}, return empty column list",
+                    dataSource.getId(), dataSource.getType());
+            return Collections.emptyList();
         }
 
-        Connection connection =
-                DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        Connection connection = null;
+        try {
+            connection =
+                    DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        } catch (Exception e) {
+            log.warn("[datasource] getConnection failed for id={} type={}, cause={}, return empty column list",
+                    dataSource.getId(), dataSource.getType(), e.getMessage());
+            return Collections.emptyList();
+        }
         List<String> columnList = new ArrayList<>();
         ResultSet rs = null;
+        ResultSet primaryKeyRs = null;
 
         try {
             if (null == connection) {
-                throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+                log.warn("[datasource] getConnection returned null for id={} type={}, return empty column list",
+                        dataSource.getId(), dataSource.getType());
+                return Collections.emptyList();
             }
 
             DatabaseMetaData metaData = connection.getMetaData();
@@ -459,11 +487,36 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             if (dataSource.getType() == DbType.ORACLE) {
                 database = null;
             }
+
+            // DatabaseMetaData.getColumns does not expose primary-key information.
+            // Read it separately so the ETL designer can keep key columns selected
+            // and generate the correct upsert/merge semantics for the target table.
+            Set<String> primaryKeys = new HashSet<>();
+            try {
+                primaryKeyRs = metaData.getPrimaryKeys(null, null, tableName);
+                while (primaryKeyRs != null && primaryKeyRs.next()) {
+                    String primaryKey = primaryKeyRs.getString(COLUMN_NAME);
+                    if (primaryKey != null) {
+                        primaryKeys.add(primaryKey.trim().toUpperCase());
+                    }
+                }
+            } catch (SQLException primaryKeyError) {
+                // Some JDBC drivers do not implement getPrimaryKeys. Keep returning
+                // the column list in that case; the UI will simply have no locked PK.
+                log.warn("[datasource] getPrimaryKeys failed for id={} type={} table={}, continue without PK metadata, cause={}",
+                        dataSource.getId(), dataSource.getType(), tableName, primaryKeyError.getMessage());
+            } finally {
+                closeResult(primaryKeyRs);
+                primaryKeyRs = null;
+            }
+
             rs = metaData.getColumns(database, null, tableName, "%");
             if (rs == null) {
-                throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+                log.warn("[datasource] getColumns returned null for id={} type={}, return empty column list",
+                        dataSource.getId(), dataSource.getType());
+                return Collections.emptyList();
             }
-            // label 格式: "name type(size) [NULL|NOT NULL] [comment]"
+            // label 格式: "name type(size) [NULL|NOT NULL] [PK] [comment]"
             // 例如: "id varchar(64) [NOT NULL] [primary key]"
             // 让前端 cascade-config.tsx 的 parseColumnLabelFn 能直接解析
             while (rs.next()) {
@@ -498,16 +551,22 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                     }
                 }
                 sb.append(nullable == 1 ? " [NULL]" : " [NOT NULL]");
+                if (colName != null && primaryKeys.contains(colName.trim().toUpperCase())) {
+                    sb.append(" [PK]");
+                }
                 if (remarks != null && !remarks.isEmpty()) {
                     sb.append(" [").append(remarks.replace(']', '_').replace('[', '_')).append(']');
                 }
                 columnList.add(sb.toString());
             }
         } catch (Exception e) {
-            log.error("Get datasource table columns error, datasourceId:{}.", dataSource.getId(), e);
-            throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+            // 网络通信异常 (例如 dm.jdbc.driver.DMException) 等, 不再阻断 ETL designer 流程
+            log.warn("[datasource] getColumns failed for id={} type={} db={} table={}, cause={}, return empty column list",
+                    dataSource.getId(), dataSource.getType(), database, tableName, e.getMessage());
+            return Collections.emptyList();
         } finally {
             closeResult(rs);
+            closeResult(primaryKeyRs);
             releaseConnection(connection);
         }
 
@@ -536,20 +595,36 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                         dataSource.getConnectionParams());
 
         if (null == connectionParam) {
-            throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+            // 网络/配置不可用时不让前端 ETL 节点拖死 —— 返回空让前端走"使用默认"兜底
+            log.warn("[datasource] buildConnectionParams returned null for id={}, type={}, return empty db list",
+                    datasourceId, dataSource.getType());
+            return Collections.emptyList();
         }
 
-        Connection connection =
-                DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        Connection connection = null;
+        try {
+            connection =
+                    DataSourceUtils.getConnection(dataSource.getType(), connectionParam);
+        } catch (Exception e) {
+            // 物理 db 不可达 (网络不通 / 凭据过期 / 防火墙) 时,不要把整个请求 5xx 给前端 ETL 画布,
+            // 而是返回空 → 前端会显示"该数据源无多 schema 列表"并提供"使用默认 (default)"按钮。
+            log.warn("[datasource] getConnection failed for id={} type={}, cause={}, return empty db list",
+                    datasourceId, dataSource.getType(), e.getMessage());
+            return Collections.emptyList();
+        }
+
         ResultSet rs = null;
 
         try {
             if (null == connection) {
-                throw new ServiceException(Status.DATASOURCE_CONNECT_FAILED);
+                log.warn("[datasource] getConnection returned null for id={} type={}, return empty db list",
+                        datasourceId, dataSource.getType());
+                return Collections.emptyList();
             }
             if (dataSource.getType() == DbType.POSTGRESQL) {
                 rs = connection.createStatement().executeQuery(Constants.DATABASES_QUERY_PG);
-            } else if (dataSource.getType() == DbType.ORACLE) {
+            } else if (dataSource.getType() == DbType.ORACLE || dataSource.getType() == DbType.DAMENG) {
+                // Dameng (达梦) 与 Oracle 同样用 user/schema 双层结构, 用 all_users.username 作为 schema 列表
                 rs = connection.createStatement().executeQuery(Constants.DATABASES_QUERY_ORACLE);
             } else {
                 rs = connection.createStatement().executeQuery(Constants.DATABASES_QUERY);
@@ -560,8 +635,10 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                 tableList.add(name);
             }
         } catch (Exception e) {
-            log.error("Get databases error, datasourceId:{}.", datasourceId, e);
-            throw new ServiceException(Status.GET_DATASOURCE_TABLES_ERROR);
+            // schema 列表读取失败 (例如 dameng 在网络通信异常时) 也降级为返回空, 而不是阻断 ETL designer 流程
+            log.warn("[datasource] query databases failed for id={} type={}, cause={}, return empty db list",
+                    datasourceId, dataSource.getType(), e.getMessage());
+            return Collections.emptyList();
         } finally {
             closeResult(rs);
             releaseConnection(connection);
@@ -595,6 +672,13 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                 schemaPattern = connectionParam.getDatabase();
                 break;
             case ORACLE:
+                schemaPattern = connectionParam.getUser();
+                if (null != schemaPattern) {
+                    schemaPattern = schemaPattern.toUpperCase();
+                }
+                break;
+            case DAMENG:
+                // Dameng (达梦) schema 与 Oracle 同结构, 也用 user 作为 schema 模式
                 schemaPattern = connectionParam.getUser();
                 if (null != schemaPattern) {
                     schemaPattern = schemaPattern.toUpperCase();

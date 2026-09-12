@@ -52,6 +52,18 @@ export default {
       }
     },
     {
+      path: '/resource/etl/subdirectory',
+      name: 'etl-subdirectory',
+      component: components['resource-etl'],
+      meta: {
+        title: 'ETL 作业管理',
+        activeMenu: 'resource',
+        activeSide: '/resource/etl-manage',
+        showSide: true,
+        auth: []
+      }
+    },
+    {
       path: '/resource/etl/designer',
       name: 'etl-designer',
       component: components['resource-etl-designer'],

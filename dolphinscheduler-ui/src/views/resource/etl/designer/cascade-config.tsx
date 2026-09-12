@@ -55,7 +55,16 @@ export default defineComponent({
     const dsId = ref<number | null>(props.modelValue?.dsId ?? null)
     const database = ref<string | null>(props.modelValue?.database ?? null)
     const table = ref<string | null>(props.modelValue?.table ?? null)
-    const columns = ref<string[]>(Array.isArray(props.modelValue?.columns) ? props.modelValue.columns : [])
+    // 旧作业保存的是 {name,type}[]，早期版本也可能保存 string[]。
+    // 统一成列名数组，避免重新打开作业时字段选中状态丢失。
+    const normalizeColumnNames = (items: any): string[] => {
+      if (!Array.isArray(items)) return []
+      return items
+        .map((item: any) => typeof item === 'string' ? item : (item?.name || item?.value || ''))
+        .map((name: any) => String(name || '').trim())
+        .filter(Boolean)
+    }
+    const columns = ref<string[]>(normalizeColumnNames(props.modelValue?.columns))
 
     const dsTypeOptions = ref<Option[]>([])
     const dsInstanceOptions = ref<Option[]>([])
@@ -69,6 +78,20 @@ export default defineComponent({
     const loadingTable = ref(false)
     const loadingColumn = ref(false)
 
+    const selectedCount = computed(() => new Set(columns.value).size)
+    const primaryCount = computed(() => columnOptions.value.filter((c: any) => c._primary).length)
+    const primaryColumnValues = computed(() =>
+      columnOptions.value.filter((c: any) => c._primary).map((c: any) => String(c.value))
+    )
+    const ensurePrimaryColumns = () => {
+      const required = primaryColumnValues.value
+      if (required.length === 0) return
+      const next = Array.from(new Set([...required, ...columns.value]))
+      if (next.length !== columns.value.length || next.some((name, index) => name !== columns.value[index])) {
+        columns.value = next
+      }
+    }
+
     const DATASOURCE_TYPES = [
       'MYSQL', 'POSTGRESQL', 'HIVE', 'CLICKHOUSE', 'ORACLE',
       'SQLSERVER', 'DB2', 'PRESTO', 'REDSHIFT', 'ATHENA',
@@ -79,12 +102,18 @@ export default defineComponent({
     dsTypeOptions.value = DATASOURCE_TYPES.map((t) => ({ label: t, value: t }))
 
     const emitChange = () => {
+      // 主键是写入模式和比对节点的基础字段，始终保留在输出列中。
+      ensurePrimaryColumns()
       // 把 columns 从 string[] 转成 {name, type}[]，让后端 / 下游 pipeline-builder 拿到真实类型
       const colsWithType = columns.value.map((col: any) => {
         if (typeof col === 'string') {
           // 从 columnOptions 反查类型
           const opt = columnOptions.value.find((c: any) => c.value === col)
-          return { name: col, type: (opt && opt._type) || 'STRING' }
+          return {
+            name: col,
+            type: (opt && opt._type) || 'STRING',
+            primary: !!(opt && opt._primary)
+          }
         }
         return col
       })
@@ -127,9 +156,12 @@ export default defineComponent({
       loadingDb.value = true
       databaseOptions.value = []
       try {
-        const list = await getDatasourceDatabasesById(id)
+        const resp = await getDatasourceDatabasesById(id)
+        // axios 返回的是 {code, msg, data, ...} 包装, 实际数组在 resp.data
+        // 兼容后端直接返回数组的情况 (response interceptor 移除包装)
+        const list = Array.isArray(resp) ? resp : (resp && Array.isArray(resp.data) ? resp.data : [])
         // 后端可能返回两种结构：字符串数组 / [{label, value}] 对象
-        databaseOptions.value = (list || []).map((d: any) =>
+        databaseOptions.value = list.map((d: any) =>
           typeof d === 'string'
             ? { label: d, value: d }
             : { label: d.label || d.value, value: d.value }
@@ -179,6 +211,11 @@ export default defineComponent({
             _comment: parsed.comment
           }
         })
+        // 新表默认全选字段，再确保主键即使被旧配置遗漏也自动加入选中集合。
+        if (columns.value.length === 0) {
+          columns.value = columnOptions.value.map((c: any) => String(c.value))
+        }
+        ensurePrimaryColumns()
       } catch (e) {
         columnOptions.value = []
       } finally {
@@ -219,7 +256,9 @@ export default defineComponent({
         const up = inner.toUpperCase().trim()
         if (up === 'NULL') result.nullable = true
         else if (up === 'NOT NULL') result.nullable = false
-        else if (up === 'PK') result.primary = true
+        else if (up === 'PK' || up === 'PRIMARY KEY' || up === 'PRIMARY_KEY' || up === 'PRIMARYKEY') {
+          result.primary = true
+        }
         else result.comment = (result.comment ? result.comment + ' ' : '') + inner
       }
       return result
@@ -228,6 +267,8 @@ export default defineComponent({
     watch(dsType, async (v) => {
       if (!v) {
         dsInstanceOptions.value = []
+        reset()
+        emitChange()
         return
       }
       dsId.value = null
@@ -239,6 +280,8 @@ export default defineComponent({
     watch(dsId, async (v) => {
       if (!v) {
         databaseOptions.value = []
+        reset()
+        emitChange()
         return
       }
       reset()
@@ -249,6 +292,10 @@ export default defineComponent({
     watch(database, async (v) => {
       if (!v || !dsId.value) {
         tableOptions.value = []
+        table.value = null
+        columns.value = []
+        columnOptions.value = []
+        emitChange()
         return
       }
       table.value = null
@@ -262,12 +309,27 @@ export default defineComponent({
     watch(table, async (v) => {
       if (!v || !dsId.value || !database.value) {
         columnOptions.value = []
+        columns.value = []
+        emitChange()
         return
       }
       columns.value = []
       columnOptions.value = []
       await loadColumns(dsId.value, database.value, v)
     })
+
+    // 抽屉可能在不同节点之间复用，父组件更新作业数据时同步本地级联状态。
+    watch(() => props.modelValue, (value: any) => {
+      if (!value) return
+      dsType.value = value.dsType ?? null
+      dsId.value = value.dsId ?? null
+      database.value = value.database ?? null
+      table.value = value.table ?? null
+      const nextColumns = normalizeColumnNames(value.columns)
+      if (JSON.stringify(nextColumns) !== JSON.stringify(columns.value)) {
+        columns.value = nextColumns
+      }
+    }, { deep: true })
 
     watch(columns, () => emitChange(), { deep: true })
 
@@ -278,17 +340,27 @@ export default defineComponent({
       loadColumns(dsId.value, database.value, table.value)
     }
 
-    // 字段表格列（简化为 3 列：字段名 / 类型 / 主键）
+    // 字段表格列：把选择状态和主键必选状态放在同一行，减少用户对“为什么删不掉”的疑惑。
     const columnTableColumns = computed(() => {
       return [
         {
+          title: '状态',
+          key: 'selected',
+          width: 72,
+          render: (row: any) => row._primary
+            ? h(NTag, { type: 'warning', size: 'small', bordered: false }, { default: () => '必选' })
+            : columns.value.includes(row.value)
+              ? h(NTag, { type: 'success', size: 'small', bordered: false }, { default: () => '已选' })
+              : h('span', { class: 'cascade-field-unselected' }, '未选')
+        },
+        {
           title: '字段名',
           key: 'name',
-          width: 160,
+          minWidth: 150,
           render: (row: any) =>
             h(
               'span',
-              { style: row._primary ? 'font-weight: 600; color: #2080f0;' : '' },
+              { class: row._primary ? 'cascade-field-primary-name' : '' },
               row._name
             )
         },
@@ -303,8 +375,8 @@ export default defineComponent({
           width: 90,
           render: (row: any) =>
             row._primary
-              ? h(NTag, { type: 'primary', size: 'small', bordered: false }, { default: () => '主键' })
-              : h('span', { style: 'color: #c2c2c2;' }, '否')
+              ? h(NTag, { type: 'primary', size: 'small', bordered: false }, { default: () => '主键 · 必选' })
+              : h('span', { class: 'cascade-field-muted' }, '否')
         }
       ]
     })
@@ -314,11 +386,229 @@ export default defineComponent({
       const styleEl = document.createElement('style')
       styleEl.id = 'cascade-config-styles'
       styleEl.textContent = `
+        .etl-node-config-form {
+          padding: 2px 0 8px;
+        }
+        .etl-node-config-section {
+          margin-bottom: 16px;
+          padding: 14px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fff;
+        }
+        .etl-node-config-overview {
+          padding-bottom: 4px;
+        }
+        .etl-node-config-overview .etl-node-config-item {
+          margin-bottom: 0;
+        }
+        .etl-node-config-overview .n-form-item-feedback-wrapper {
+          min-height: 0;
+        }
+        .etl-node-config-section-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 10px;
+          color: #1f2937;
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 20px;
+        }
+        .etl-node-config-section-hint {
+          color: #94a3b8;
+          font-size: 12px;
+          font-weight: 400;
+        }
+        .etl-node-config-overview-grid {
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+        }
+        .etl-node-config-overview-grid .etl-node-config-item {
+          display: grid;
+          grid-template-columns: 118px minmax(0, 1fr);
+          column-gap: 12px;
+          align-items: center;
+        }
+        .etl-node-config-overview-grid .n-form-item-label {
+          align-self: center;
+          margin-bottom: 0;
+        }
+        .etl-node-config-overview-grid .n-form-item-blank {
+          grid-column: 2;
+          grid-row: 1;
+          min-width: 0;
+        }
+        .etl-node-config-overview-grid .n-form-item-feedback-wrapper {
+          grid-column: 2;
+          grid-row: 2;
+          margin-top: 4px;
+          min-height: 0;
+        }
+        .etl-node-config-item {
+          margin-bottom: 14px;
+        }
+        .etl-node-config-item--alias,
+        .etl-node-config-item--cascade {
+          min-width: 0;
+        }
+        .etl-node-config-item--type .n-form-item-blank {
+          min-height: 34px;
+          align-items: center;
+        }
+        .etl-node-config-fields > .n-form-item:last-child {
+          margin-bottom: 0;
+        }
+        .etl-node-config-actions {
+          display: flex;
+          align-items: center;
+          justify-content: flex-end;
+          gap: 12px;
+          padding-top: 4px;
+        }
+        @media (max-width: 640px) {
+          .etl-node-config-overview-grid {
+            grid-template-columns: 1fr;
+          }
+          .cascade-config-grid {
+            grid-template-columns: 1fr;
+          }
+          .cascade-config-section-heading,
+          .cascade-field-toolbar,
+          .etl-node-config-section-heading {
+            align-items: flex-start;
+            flex-direction: column;
+          }
+        }
+        .cascade-field-panel {
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fff;
+          overflow: hidden;
+        }
+        .cascade-field-toolbar {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: 12px;
+          padding: 12px 14px 10px;
+          background: #f8fafc;
+          border-bottom: 1px solid #eef2f7;
+          flex-wrap: wrap;
+        }
+        .cascade-field-title {
+          color: #1f2937;
+          font-size: 14px;
+          font-weight: 600;
+          line-height: 20px;
+        }
+        .cascade-field-hint {
+          margin-top: 2px;
+          color: #64748b;
+          font-size: 12px;
+          line-height: 18px;
+        }
+        .cascade-field-summary {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 8px 14px;
+          color: #475569;
+          font-size: 12px;
+          background: #fff;
+        }
+        .cascade-config-layout {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+          width: 100%;
+        }
+        .cascade-config-section {
+          padding: 14px;
+          border: 1px solid #e5e7eb;
+          border-radius: 8px;
+          background: #fff;
+        }
+        .cascade-config-section-heading {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: 12px;
+          margin-bottom: 12px;
+          color: #1f2937;
+          font-size: 14px;
+          font-weight: 600;
+        }
+        .cascade-config-section-hint {
+          color: #94a3b8;
+          font-size: 12px;
+          font-weight: 400;
+        }
+        .cascade-config-grid {
+          display: grid;
+          grid-template-columns: repeat(2, minmax(0, 1fr));
+          gap: 12px 14px;
+        }
+        .cascade-config-field {
+          min-width: 0;
+        }
+        .cascade-config-field--full {
+          grid-column: 1 / -1;
+        }
+        .cascade-config-label {
+          display: block;
+          margin-bottom: 6px;
+          color: #475569;
+          font-size: 13px;
+          line-height: 18px;
+        }
+        .cascade-config-label-required {
+          color: #ef4444;
+        }
+        .cascade-field-table {
+          max-height: 300px;
+          overflow: auto;
+          scrollbar-width: thin;
+        }
+        .cascade-field-table::-webkit-scrollbar {
+          width: 8px;
+          height: 8px;
+        }
+        .cascade-field-table::-webkit-scrollbar-thumb {
+          border-radius: 999px;
+          background: #cbd5e1;
+        }
+        .cascade-field-panel .n-data-table-tbody .n-data-table-tr {
+          cursor: pointer;
+        }
+        .cascade-field-panel .n-data-table-tbody .n-data-table-tr:focus-visible {
+          outline: 2px solid #60a5fa;
+          outline-offset: -2px;
+        }
+        .cascade-field-primary-name {
+          color: #1d4ed8;
+          font-weight: 600;
+        }
+        .cascade-field-muted,
+        .cascade-field-unselected {
+          color: #94a3b8;
+        }
+        .cascade-field-panel .n-data-table {
+          border-top: 1px solid #eef2f7;
+        }
         .n-data-table-tr.selected-row td {
-          background-color: #e6f4ff !important;
+          background-color: #eff6ff !important;
         }
         .n-data-table-tr.selected-row:hover td {
-          background-color: #bae0ff !important;
+          background-color: #dbeafe !important;
+        }
+        .n-data-table-tr.primary-row td {
+          background-color: #fffbeb !important;
+        }
+        .n-data-table-tr.primary-row.selected-row td {
+          background-color: #eff6ff !important;
         }
         .n-data-table-tr {
           cursor: pointer;
@@ -332,7 +622,8 @@ export default defineComponent({
       columns.value = columnOptions.value.map((c) => c.value)
     }
     const handleClearAll = () => {
-      columns.value = []
+      // 主键字段是目标表写入和比对的必要条件，清空操作只清理普通字段。
+      columns.value = primaryColumnValues.value
     }
     // 单列切换 (在字段表格中点行)
     const handleToggleColumn = (col: any) => {
@@ -351,12 +642,19 @@ export default defineComponent({
         await nextTick()
         columns.value = v.map((c) => c.value)
       }
+      ensurePrimaryColumns()
     })
 
     return () => (
-      <NSpace vertical size='medium'>
-        <div>
-          <div style='margin-bottom: 6px;'>数据源类型 <span style='color: #f56c6c;'>*</span></div>
+      <div class='cascade-config-layout'>
+        <section class='cascade-config-section'>
+          <div class='cascade-config-section-heading'>
+            <span>{props.mode === 'sink' ? '目标数据源' : '数据源'} <span class='cascade-config-label-required'>*</span></span>
+            <span class='cascade-config-section-hint'>按顺序选择数据源、库和表</span>
+          </div>
+          <div class='cascade-config-grid'>
+            <div class='cascade-config-field'>
+              <label class='cascade-config-label'>数据源类型 <span class='cascade-config-label-required'>*</span></label>
           <NSelect
             v-model:value={dsType.value}
             options={dsTypeOptions.value}
@@ -364,9 +662,9 @@ export default defineComponent({
             filterable
             clearable
           />
-        </div>
-        <div>
-          <div style='margin-bottom: 6px;'>数据源实例 <span style='color: #f56c6c;'>*</span></div>
+            </div>
+            <div class='cascade-config-field'>
+              <label class='cascade-config-label'>数据源实例 <span class='cascade-config-label-required'>*</span></label>
           {loadingInstances.value ? (
             <NSpin size='small' />
           ) : dsInstanceOptions.value.length === 0 && dsType.value ? (
@@ -381,9 +679,9 @@ export default defineComponent({
               disabled={!dsType.value}
             />
           )}
-        </div>
-        <div>
-          <div style='margin-bottom: 6px;'>Schema / 数据库 <span style='color: #f56c6c;'>*</span></div>
+            </div>
+            <div class='cascade-config-field'>
+              <label class='cascade-config-label'>Schema / 数据库 <span class='cascade-config-label-required'>*</span></label>
           {loadingDb.value ? (
             <NSpin size='small' />
           ) : databaseOptions.value.length === 0 && dsId.value ? (
@@ -409,9 +707,9 @@ export default defineComponent({
               disabled={!dsId.value}
             />
           )}
-        </div>
-        <div>
-          <div style='margin-bottom: 6px;'>表名 <span style='color: #f56c6c;'>*</span></div>
+            </div>
+            <div class='cascade-config-field'>
+              <label class='cascade-config-label'>表名 <span class='cascade-config-label-required'>*</span></label>
           {loadingTable.value ? (
             <NSpin size='small' />
           ) : tableOptions.value.length === 0 && database.value ? (
@@ -426,26 +724,35 @@ export default defineComponent({
               disabled={!database.value}
             />
           )}
-        </div>
-        <div>
-          <div style='margin-bottom: 6px; display: flex; justify-content: space-between; align-items: center;'>
-            <span>字段（点击行选择 / 取消）</span>
-            <NSpace size='small'>
-              <NButton size='tiny' onClick={handleSelectAll}>全选</NButton>
-              <NButton size='tiny' onClick={handleClearAll}>清空</NButton>
-              <NTag size='small' type='info'>
-                已选 {columns.value.length} / {columnOptions.value.length}
-              </NTag>
-            </NSpace>
+            </div>
           </div>
+        </section>
+        <section class='cascade-field-panel'>
+          <div class='cascade-field-toolbar'>
+            <div>
+              <div class='cascade-field-title'>字段 <span style='color: #f56c6c;'>*</span></div>
+              <div class='cascade-field-hint'>点击字段行即可选择或取消；主键字段会自动保留</div>
+            </div>
+            <div style='display: flex; align-items: center; gap: 6px; flex-wrap: wrap;'>
+              <NButton size='tiny' onClick={handleSelectAll}>全选</NButton>
+              <NButton size='tiny' onClick={handleClearAll}>清空可选</NButton>
+              <NTag size='small' type='info'>
+                已选 {selectedCount.value} / {columnOptions.value.length}
+              </NTag>
+            </div>
+          </div>
+          {primaryCount.value > 0 && (
+            <div class='cascade-field-summary'>
+              <NTag size='small' type='warning' bordered={false}>主键必选</NTag>
+              <span>检测到 {primaryCount.value} 个主键字段，已自动加入选中项</span>
+            </div>
+          )}
           {loadingColumn.value ? (
             <NSpin size='small' />
           ) : columnOptions.value.length === 0 ? (
             <NEmpty size='small' description='请先选择表' />
           ) : (
-            <div
-              style='max-height: 280px; overflow-y: auto; border: 1px solid #e5e7eb; border-radius: 4px;'
-            >
+            <div class='cascade-field-table'>
               <NDataTable
                 size='small'
                 columns={columnTableColumns.value}
@@ -453,21 +760,29 @@ export default defineComponent({
                 pagination={false}
                 row-key={(row: any) => row.value}
                 row-class-name={(row: any) =>
-                  columns.value.includes(row.value) ? 'selected-row' : ''
+                  [
+                    columns.value.includes(row.value) ? 'selected-row' : '',
+                    row._primary ? 'primary-row' : ''
+                  ].filter(Boolean).join(' ')
                 }
-                onRowClick={(row: any) => {
-                  if (row._primary) return
-                  if (columns.value.includes(row.value)) {
-                    columns.value = columns.value.filter((c: string) => c !== row.value)
-                  } else {
-                    columns.value = [...columns.value, row.value]
+                row-props={(row: any) => ({
+                  role: 'button',
+                  tabindex: row._primary ? -1 : 0,
+                  'aria-label': row._primary ? `${row._name}（主键，必选）` : `${row._name}（${columns.value.includes(row.value) ? '已选，点击取消' : '未选，点击选择'}）`,
+                  'aria-pressed': columns.value.includes(row.value),
+                  onClick: () => handleToggleColumn(row),
+                  onKeydown: (event: KeyboardEvent) => {
+                    if ((event.key === 'Enter' || event.key === ' ') && !row._primary) {
+                      event.preventDefault()
+                      handleToggleColumn(row)
+                    }
                   }
-                }}
+                })}
               />
             </div>
           )}
-        </div>
-      </NSpace>
+        </section>
+      </div>
     )
   }
 })

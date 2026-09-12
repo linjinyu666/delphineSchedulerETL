@@ -426,6 +426,209 @@ const FcdStyles = `
 .fcd-footer-meta .muted { color: #A8A29E; margin-right: 4px; }
 .fcd-footer-actions { display: flex; justify-content: space-between; gap: 8px; width: 100%; }
 .fcd-footer-actions-right { display: flex; gap: 8px; }
+
+/* 与表输入抽屉统一：卡片分组、浅色边框、紧凑操作区 */
+.fcd-section {
+  margin: 0 14px 16px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+.fcd-section.fcd-section-last {
+  margin-bottom: 0;
+  border-bottom: 1px solid #e5e7eb;
+}
+.fcd-section-num { display: none; }
+.fcd-section-title,
+.fcd-section-title-row .fcd-section-title {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 20px;
+}
+.fcd-section-title-row {
+  margin-bottom: 10px;
+}
+.fcd-section-title-row .fcd-section-hint { margin: 0; }
+.fcd-section-hint {
+  margin: 2px 0 12px;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 18px;
+}
+.fcd-field-label {
+  display: block;
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 18px;
+}
+.fcd-required { color: #ef4444; }
+.fcd-basic-field {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  align-items: center;
+  column-gap: 12px;
+}
+.fcd-basic-field + .fcd-basic-field { margin-top: 8px; }
+.fcd-basic-field .fcd-field-label {
+  margin-bottom: 0;
+}
+.fcd-type-tag {
+  display: inline-flex;
+  align-items: center;
+  min-height: 26px;
+  padding: 3px 10px;
+  border: 1px solid #93c5fd;
+  border-radius: 4px;
+  color: #2563eb;
+  background: #eff6ff;
+  font-size: 12px;
+  line-height: 18px;
+}
+.fcd-alias-row {
+  min-height: 34px;
+  padding: 0 10px;
+  border-color: #d9e2ef;
+  border-radius: 6px;
+  background: #fff;
+}
+.fcd-alias-row:focus-within {
+  border-color: #288fff;
+  box-shadow: 0 0 0 2px rgba(40, 143, 255, 0.12);
+}
+.fcd-alias-tag {
+  color: #2563eb;
+  background: #eff6ff;
+}
+.fcd-alias-input {
+  padding: 8px 0;
+  color: #1f2937;
+}
+.fcd-alias-valid {
+  width: 18px;
+  height: 18px;
+  background: #10b981;
+}
+.fcd-alias-valid.bad { background: #ef4444; }
+.fcd-map-table {
+  max-height: 300px;
+  overflow: auto;
+  border-color: #e5e7eb;
+  border-radius: 8px;
+  scrollbar-width: thin;
+}
+.fcd-map-table::-webkit-scrollbar { width: 8px; height: 8px; }
+.fcd-map-table::-webkit-scrollbar-thumb {
+  border-radius: 999px;
+  background: #cbd5e1;
+}
+.fcd-map-header {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px 10px;
+  background: #f8fafc;
+  border-bottom-color: #e5e7eb;
+  color: #475569;
+  font-size: 11px;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.fcd-map-row {
+  min-height: 32px;
+  padding: 3px 10px;
+  border-bottom-color: #eef2f7;
+}
+.fcd-map-row:hover { background: #eff6ff; }
+.fcd-map-row.disabled { background: #f8fafc; }
+.fcd-map-checkbox {
+  border-color: #cbd5e1;
+  border-radius: 4px;
+}
+.fcd-map-checkbox.checked {
+  background: #0ea5a4;
+  border-color: #0ea5a4;
+}
+.fcd-map-field-src {
+  padding-top: 3px;
+  padding-bottom: 3px;
+  line-height: 16px;
+}
+.fcd-map-field-dst {
+  height: 26px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+  line-height: 16px;
+}
+.fcd-map-field-src {
+  color: #1f2937;
+  background: #f1f5f9;
+}
+.fcd-map-field-dst {
+  border-color: #d9e2ef;
+  color: #1f2937;
+}
+.fcd-map-field-dst:focus {
+  border-color: #288fff;
+  box-shadow: 0 0 0 2px rgba(40, 143, 255, 0.12);
+}
+.fcd-map-actions { gap: 6px; }
+.fcd-action-link {
+  padding: 5px 8px;
+  color: #2563eb;
+  border: 1px solid #dbeafe;
+  border-radius: 5px;
+  background: #eff6ff;
+}
+.fcd-action-link:hover { background: #dbeafe; }
+.fcd-action-link.muted {
+  color: #475569;
+  border-color: #e2e8f0;
+  background: #f8fafc;
+}
+.fcd-action-link.muted:hover { background: #f1f5f9; }
+.fcd-map-count {
+  color: #2563eb;
+  background: #eff6ff;
+}
+.fcd-where-shell {
+  border-color: #d9e2ef;
+  border-radius: 8px;
+}
+.fcd-where-shell:focus-within {
+  border-color: #288fff;
+  box-shadow: 0 0 0 2px rgba(40, 143, 255, 0.12);
+}
+.fcd-where-token-bar {
+  padding: 8px;
+  background: #f8fafc;
+  border-bottom-color: #e5e7eb;
+}
+.fcd-where-token {
+  border-color: #dbeafe;
+  color: #2563eb;
+  background: #eff6ff;
+}
+.fcd-where-token:hover {
+  border-color: #93c5fd;
+  color: #1d4ed8;
+}
+.fcd-where-input { min-height: 72px; }
+.fcd-preview-block {
+  border-radius: 8px;
+  background: #111827;
+}
+.fcd-drawer-footer {
+  margin-top: 0;
+  padding: 12px 16px;
+  background: #f8fafc;
+  border-top-color: #e5e7eb;
+}
+.fcd-footer-actions { justify-content: flex-end; }
+.fcd-footer-meta { margin-right: auto; color: #64748b; }
 `
 
 export default defineComponent({
@@ -636,50 +839,52 @@ export default defineComponent({
       <NDrawer
         show={props.visible}
         onUpdate:show={(v: boolean) => emit('update:visible', v)}
-        width={560}
+        width={620}
         placement="right"
       >
         <NDrawerContent title="过滤节点配置" closable>
           {/* 1. 节点别名 */}
           <div class='fcd-section'>
-            <div class='fcd-section-num'>01</div>
-            <div class='fcd-section-title'>节点别名</div>
-            <div class='fcd-section-hint'>下游节点引用此节点时使用的名称</div>
-            <div class='fcd-alias-row'>
-              <span class='fcd-alias-tag'>alias</span>
-              <input
-                class='fcd-alias-input'
-                value={form.alias}
-                onInput={(e: any) => (form.alias = e.target.value)}
-                placeholder='filter1'
-              />
-              {form.alias.trim() &&
-              /^[a-zA-Z_][a-zA-Z0-9_]*$/.test(form.alias.trim()) ? (
-                <span class='fcd-alias-valid'>✓</span>
-              ) : (
-                <span class='fcd-alias-valid bad'>!</span>
-              )}
+            <div class='fcd-section-title-row'>
+              <div class='fcd-section-title'>基本信息</div>
+              <div class='fcd-section-hint'>用于识别画布节点和 SQL 别名</div>
+            </div>
+            <div class='fcd-basic-field'>
+              <label class='fcd-field-label'>
+                节点名称(别名) <span class='fcd-required'>*</span>
+              </label>
+              <div class='fcd-alias-row'>
+                <input
+                  class='fcd-alias-input'
+                  value={form.alias}
+                  onInput={(e: any) => (form.alias = e.target.value)}
+                  placeholder='例如 filter1'
+                />
+              </div>
+            </div>
+            <div class='fcd-basic-field'>
+              <label class='fcd-field-label'>类型</label>
+              <span class='fcd-type-tag'>filter</span>
             </div>
           </div>
 
           {/* 2. 字段映射（核心：一对一映射表） */}
           <div class='fcd-section'>
-            <div class='fcd-section-num'>02</div>
             <div class='fcd-section-title-row'>
-              <div class='fcd-section-title'>字段映射</div>
+              <div class='fcd-section-title'>字段选择与映射</div>
               <div class='fcd-map-actions'>
                 <button class='fcd-action-link' onClick={selectAll} type='button'>
-                  + 全选
+                  全选
                 </button>
                 <button
                   class='fcd-action-link muted'
                   onClick={clearAll}
                   type='button'
                 >
-                  — 全不选
+                  清空可选
                 </button>
                 <span class='fcd-map-count'>
-                  {validColumnsForPreview.value.length} / {form.columns.length} 合法输出
+                  已选 {enabledColumns.value.length} / {form.columns.length}
                 </span>
               </div>
             </div>
@@ -767,7 +972,6 @@ export default defineComponent({
 
           {/* 3. WHERE 过滤 */}
           <div class='fcd-section'>
-            <div class='fcd-section-num'>03</div>
             <div class='fcd-section-title'>WHERE 过滤</div>
             <div class='fcd-section-hint'>
               未填写 = 不过滤 · 点击上方字段 token 可快速插入
@@ -800,7 +1004,6 @@ export default defineComponent({
 
           {/* 4. SQL 预览 */}
           <div class='fcd-section fcd-section-last'>
-            <div class='fcd-section-num'>04</div>
             <div class='fcd-section-title'>SQL 预览</div>
             <div class='fcd-section-hint'>下游预览节点会用这段子查询</div>
             {errorCount.value > 0 && (
@@ -836,13 +1039,6 @@ export default defineComponent({
               )}
             </div>
             <div class='fcd-footer-actions'>
-              <NButton
-                quaternary
-                type='error'
-                onClick={onDelete}
-              >
-                删除节点
-              </NButton>
               <div class='fcd-footer-actions-right'>
                 <NButton onClick={onCancel}>取消</NButton>
                 <NButton

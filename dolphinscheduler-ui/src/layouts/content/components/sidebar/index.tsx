@@ -52,6 +52,8 @@ const Sidebar = defineComponent({
         nativeScrollbar={false}
         show-trigger='bar'
         collapse-mode='width'
+        width={220}                              // Fix-13.4: 侧栏加宽 220px,避免"项目..."截断
+        collapsed-width={64}
         collapsed={this.collapsedRef}
         onCollapse={() => (this.collapsedRef = true)}
         onExpand={() => (this.collapsedRef = false)}

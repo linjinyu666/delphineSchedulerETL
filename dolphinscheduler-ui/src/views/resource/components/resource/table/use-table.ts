@@ -32,10 +32,18 @@ import type { Router } from 'vue-router'
 import { useFileState } from '@/views/resource/components/resource/use-file'
 import { defineStore } from 'pinia'
 
-const goSubFolder = (router: Router, item: any) => {
+const goSubFolder = (
+  router: Router,
+  item: any,
+  resourceType?: ResourceType
+) => {
   if (item.directory) {
-    // ETL 类型走自己的子目录路由
-    const routeName = item.type === 'ETL' ? 'etl-subdirectory' : 'resource-file-subdirectory'
+    // Directory rows returned by the resource API do not always carry the
+    // requested resource type, so use the current list context first.
+    const routeName =
+      resourceType === 'ETL' || item.type === 'ETL'
+        ? 'etl-subdirectory'
+        : 'resource-file-subdirectory'
     router.push({
       name: routeName,
       query: { prefix: item.fullName, tenantCode: item.user_name }
@@ -49,9 +57,10 @@ const goSubFolder = (router: Router, item: any) => {
     // ETL 文件点击 → 打开画布编辑器
     const fileName = item.fileName || ''
     const name = fileName.replace(/\.pipeline$/, '').replace(/\.json$/, '')
+    const prefix = item.fullName?.replace(/[^/]+$/, '') || ''
     router.push({
       name: 'etl-designer',
-      query: { name }
+      query: { name, prefix }
     })
   }
 }
@@ -109,7 +118,8 @@ export function useTable() {
             : h(
                 ButtonLink,
                 {
-                  onClick: () => goSubFolder(router, row)
+                  onClick: () =>
+                    goSubFolder(router, row, variables.resourceType)
                 },
                 {
                   default: () =>
@@ -161,6 +171,7 @@ export function useTable() {
         render: (row: any) =>
           h(TableAction, {
             row,
+            resourceType: variables.resourceType,
             onReuploadResource: (name, description, fullName, user_name) =>
               reuploadResource(name, description, fullName, user_name),
             onRenameResource: (name, description, fullName, user_name) =>
@@ -177,7 +188,7 @@ export function useTable() {
     // ETL 类型走专用路由
     if (variables.resourceType === 'ETL') {
       router.push({
-        name: 'resource-etl-create',
+        name: 'etl-designer',
         query: { prefix: fullName || '' }
       })
       return

@@ -170,3 +170,922 @@ $bgLight: #ffffff;
   font-size: 14px;
   color: #333;
 }
+
+// Fix-13.3: 「未保存」徽章圆点脉冲动画
+@keyframes etl-pulse {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%      { opacity: 0.5; transform: scale(1.4); }
+}
+
+// === Fix-6 SQL 编辑器增强(行号 + 括号匹配) ===
+// 整个编辑区:  行号栏 + 高亮层 + textarea 三层叠加
+:global(.sql-editor-shell) {
+  position: relative;
+}
+
+:global(.sql-editor-wrap) {
+  position: relative;
+  display: flex;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  background: #1e1e1e;
+  overflow: hidden;
+  font-family: Menlo, Consolas, 'Courier New', monospace;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+:global(.sql-editor-gutter) {
+  flex-shrink: 0;
+  width: 44px;
+  padding: 8px 6px 8px 0;
+  text-align: right;
+  color: #6b7280;
+  background: #18181b;
+  user-select: none;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+  border-right: 1px solid #27272a;
+  overflow: hidden;
+}
+
+:global(.sql-editor-gutter-line) {
+  display: block;
+  height: 18px;
+  padding-right: 4px;
+}
+
+:global(.sql-editor-gutter-line-active) {
+  color: #f59e0b;
+  font-weight: 600;
+}
+
+:global(.sql-editor-scroll) {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  min-height: 320px;       // Fix-13.1: 让 scroll 容器有最小高度
+  overflow: auto;
+  max-height: 520px;
+}
+
+:global(.sql-editor-highlight),
+:global(.sql-editor-textarea) {
+  margin: 0;
+  padding: 8px 12px;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+  white-space: pre;
+  word-wrap: normal;
+  tab-size: 2;
+  -moz-tab-size: 2;
+}
+
+:global(.sql-editor-highlight) {
+  pointer-events: none;
+  color: #d4d4d4;
+  min-height: 320px;
+  min-width: 100%;
+  box-sizing: border-box;
+}
+
+:global(.sql-editor-textarea) {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  min-height: 320px;       // Fix-13.1: 强制最小高度,避免 modal 里塌成 2 行
+  background: transparent;
+  color: transparent;
+  caret-color: #f59e0b;
+  border: none;
+  outline: none;
+  resize: vertical;          // Fix-13.1: 允许用户手动撑大
+  box-sizing: border-box;
+  z-index: 2;
+  font-family: inherit;
+  font-size: inherit;
+  line-height: inherit;
+}
+
+:global(.sql-editor-textarea)::selection {
+  background: rgba(245, 158, 11, 0.35);
+  color: transparent;
+}
+
+// SQL 语法高亮 token 颜色
+:global(.sql-kw)   { color: #c084fc; font-weight: 600; }
+:global(.sql-str)  { color: #86efac; }
+:global(.sql-num)  { color: #fbbf24; }
+:global(.sql-cmt)  { color: #6b7280; font-style: italic; }
+:global(.sql-fn)   { color: #60a5fa; }
+
+// 括号匹配高亮
+:global(.sql-match) {
+  background: rgba(245, 158, 11, 0.35);
+  border-radius: 2px;
+  box-shadow: 0 0 0 1px #f59e0b;
+}
+
+// === 字段补全 popup ===
+:global(.sql-autocomplete) {
+  position: absolute;
+  z-index: 10;
+  background: #ffffff;
+  border: 1px solid #d0d5dd;
+  border-radius: 6px;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.12);
+  min-width: 240px;
+  max-height: 240px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+:global(.sql-ac-item) {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 12px;
+  font-size: 12px;
+  cursor: pointer;
+
+  &:hover { background: #f5f7fa; }
+}
+
+:global(.sql-ac-label) {
+  font-weight: 600;
+  color: #0f172a;
+  font-family: Menlo, Consolas, monospace;
+}
+
+:global(.sql-ac-detail) {
+  flex: 1;
+  color: #6b7280;
+  font-size: 11px;
+}
+
+:global(.sql-ac-type) {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-weight: 500;
+}
+
+// 所有节点配置抽屉统一采用卡片分区和紧凑字段间距。
+:global(.etl-node-config-form) {
+  padding: 2px 0 8px;
+}
+
+:global(.etl-node-config-section) {
+  margin-bottom: 16px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+:global(.etl-node-config-overview) {
+  padding-bottom: 4px;
+}
+
+:global(.etl-node-config-overview .etl-node-config-item) {
+  margin-bottom: 0;
+}
+
+:global(.etl-node-config-section-heading) {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+:global(.etl-node-config-section-hint) {
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+:global(.etl-node-config-item) {
+  margin-bottom: 14px;
+}
+
+:global(.etl-node-config-item--type .n-form-item-blank) {
+  min-height: 34px;
+  align-items: center;
+}
+
+:global(.etl-node-config-fields > .n-form-item:last-child) {
+  margin-bottom: 0;
+}
+
+:global(.etl-node-config-actions) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 4px;
+}
+
+// 所有节点配置抽屉的基本信息采用“标签 + 内容”同行布局。
+:global(.etl-node-config-overview-grid) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:global(.etl-node-config-overview .etl-node-config-section-heading) {
+  margin-bottom: 10px;
+}
+
+:global(.etl-node-config-overview-grid .etl-node-config-item) {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+}
+
+:global(.etl-node-config-overview-grid .n-form-item-label) {
+  align-self: center;
+  margin-bottom: 0;
+}
+
+:global(.etl-node-config-overview-grid .n-form-item-blank) {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+:global(.etl-node-config-overview-grid .n-form-item-feedback-wrapper) {
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 4px;
+  min-height: 0;
+}
+
+// 节点专属参数统一为“标签 + 控件”同行布局，多个参数自然形成多行。
+:global(.etl-node-config-fields .n-form-item) {
+  display: grid;
+  grid-template-columns: 118px minmax(0, 1fr);
+  column-gap: 12px;
+  align-items: center;
+}
+
+:global(.etl-node-config-fields .n-form-item-label) {
+  align-self: center;
+  margin-bottom: 0;
+}
+
+:global(.etl-node-config-fields .n-form-item-blank) {
+  grid-column: 2;
+  grid-row: 1;
+  min-width: 0;
+}
+
+:global(.etl-node-config-fields .n-form-item-feedback-wrapper) {
+  grid-column: 2;
+  grid-row: 2;
+  margin-top: 4px;
+  min-height: 0;
+}
+
+:global(.etl-node-config-fields .n-input-number),
+:global(.etl-node-config-fields .n-select) {
+  width: 100%;
+}
+
+// Sink 字段映射使用紧凑表格，避免每个字段重复占用一整块表单标签空间。
+:global(.etl-field-mapping-table) {
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+:global(.etl-field-mapping-header),
+:global(.etl-field-mapping-row) {
+  display: grid;
+  grid-template-columns: 44px minmax(120px, 0.8fr) minmax(170px, 1fr) minmax(190px, 1.2fr);
+  gap: 8px;
+  align-items: center;
+}
+
+:global(.etl-field-mapping-header) {
+  min-height: 32px;
+  padding: 0 10px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.etl-field-mapping-row) {
+  min-height: 46px;
+  padding: 6px 10px;
+  border-top: 1px solid #eef2f7;
+}
+
+:global(.etl-field-mapping-target) {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  color: #334155;
+  font-size: 13px;
+  font-weight: 500;
+}
+
+:global(.etl-field-mapping-target strong) {
+  display: block;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 17px;
+}
+
+:global(.etl-field-mapping-target small) {
+  display: block;
+  margin-top: 1px;
+  color: #94a3b8;
+  font-size: 11px;
+  font-weight: 400;
+  line-height: 15px;
+}
+
+:global(.etl-field-mapping-index) {
+  display: inline-flex;
+  width: 20px;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 20px;
+  border-radius: 4px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+:global(.etl-field-mapping-row .n-input),
+:global(.etl-field-mapping-row .n-select) {
+  width: 100%;
+}
+
+:global(.etl-field-mapping-row.disabled) {
+  background: #f8fafc;
+}
+
+:global(.etl-field-mapping-row.disabled .etl-field-mapping-target strong) {
+  color: #94a3b8;
+}
+
+// 自定义节点抽屉沿用通用抽屉的卡片密度和边界。
+:global(.etl-config-card) {
+  border-color: #e5e7eb;
+  border-radius: 8px;
+}
+
+:global(.etl-config-card .n-card-header) {
+  padding: 12px 14px 8px;
+  color: #1f2937;
+  font-size: 14px;
+  line-height: 20px;
+}
+
+:global(.etl-config-card .n-card__content) {
+  padding: 0 14px 14px;
+}
+
+:global(.etl-node-type-tag) {
+  justify-self: start;
+}
+
+:global(.etl-join-field-hint) {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:global(.etl-join-alias-grid) {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+:global(.etl-join-field-label) {
+  margin-bottom: 6px;
+  color: #475569;
+  font-size: 13px;
+  line-height: 18px;
+}
+
+:global(.etl-join-required) {
+  color: #ef4444;
+}
+
+:global(.etl-join-type-row) {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 14px;
+}
+
+:global(.etl-join-key-toolbar) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+
+:global(.etl-join-key-toolbar .etl-join-field-label) {
+  margin-bottom: 0;
+}
+
+:global(.etl-help-icon) {
+  display: inline-flex;
+  width: 16px;
+  height: 16px;
+  align-items: center;
+  justify-content: center;
+  margin-left: 5px;
+  border: 1px solid #94a3b8;
+  border-radius: 50%;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1;
+  cursor: help;
+  vertical-align: -1px;
+}
+
+:global(.etl-help-icon:hover),
+:global(.etl-help-icon:focus-visible) {
+  border-color: #2080f0;
+  color: #2080f0;
+  outline: none;
+}
+
+:global(.etl-join-key-list) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:global(.etl-join-key-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 18px minmax(0, 1fr) 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+:global(.etl-join-key-equals) {
+  color: #64748b;
+  font-size: 14px;
+  font-weight: 600;
+  text-align: center;
+}
+
+:global(.etl-join-warning) {
+  margin-top: 8px;
+  padding: 6px 10px;
+  border: 1px solid #fecaca;
+  border-radius: 6px;
+  background: #fef2f2;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:global(.etl-output-toolbar) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 220px;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+:global(.etl-output-default-hint) {
+  margin-left: 6px;
+  color: #94a3b8;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+:global(.etl-output-mapping-table) {
+  overflow: hidden;
+  margin-bottom: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 6px;
+}
+
+:global(.etl-output-mapping-header),
+:global(.etl-output-mapping-row) {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) 40px minmax(120px, 0.9fr) 28px;
+  gap: 8px;
+  align-items: center;
+}
+
+:global(.etl-output-mapping-header) {
+  min-height: 30px;
+  padding: 0 8px;
+  background: #f8fafc;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.etl-output-mapping-list) {
+  max-height: 236px;
+  overflow-y: auto;
+}
+
+:global(.etl-output-mapping-row) {
+  min-height: 42px;
+  padding: 5px 8px;
+  border-top: 1px solid #eef2f7;
+}
+
+:global(.etl-output-source) {
+  min-width: 0;
+  color: #334155;
+  font-size: 12px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.etl-output-source small) {
+  display: block;
+  margin-top: 1px;
+  color: #94a3b8;
+  font-size: 11px;
+}
+
+:global(.etl-output-as) {
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
+
+:global(.etl-output-mapping-error) {
+  margin: -4px 0 12px;
+  color: #d03050;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+@media (max-width: 520px) {
+  :global(.etl-join-alias-grid) {
+    grid-template-columns: 1fr;
+  }
+  :global(.etl-join-type-row) {
+    gap: 6px;
+  }
+  :global(.etl-join-key-toolbar) {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+  :global(.etl-output-toolbar) {
+    grid-template-columns: 1fr;
+  }
+  :global(.etl-output-mapping-header),
+  :global(.etl-output-mapping-row) {
+    grid-template-columns: minmax(0, 1fr) 28px minmax(100px, 0.8fr) 28px;
+  }
+}
+
+@media (max-width: 640px) {
+  :global(.etl-field-mapping-header),
+  :global(.etl-field-mapping-row) {
+    grid-template-columns: 36px minmax(96px, 0.8fr) minmax(130px, 1fr) minmax(140px, 1fr);
+    gap: 6px;
+  }
+
+  :global(.etl-node-config-fields .n-form-item) {
+    grid-template-columns: 1fr;
+    row-gap: 4px;
+  }
+  :global(.etl-node-config-fields .n-form-item-blank),
+  :global(.etl-node-config-fields .n-form-item-feedback-wrapper) {
+    grid-column: 1;
+  }
+  :global(.etl-node-config-fields .n-form-item-blank) {
+    grid-row: 2;
+  }
+  :global(.etl-node-config-fields .n-form-item-feedback-wrapper) {
+    grid-row: 3;
+  }
+}
+
+// SQL 节点配置与其它节点抽屉共用同一套浅色画布、白色卡片和紧凑间距。
+:global(.sql-config-body) {
+  padding: 2px 16px 16px;
+  background: #f7f8fa;
+  color: #1f2937;
+}
+
+:global(.sql-config-steps) {
+  margin: 0 0 16px !important;
+  padding: 0 4px 12px;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+:global(.sql-config-steps .n-step-content__title) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+:global(.sql-config-steps .n-step--process .n-step-content__title) {
+  color: #1f2937;
+  font-weight: 600;
+}
+
+:global(.sql-config-sections.n-collapse) {
+  border: 0;
+  background: transparent;
+}
+
+:global(.sql-config-sections .n-collapse-item) {
+  margin-bottom: 16px;
+  overflow: hidden;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #fff;
+}
+
+:global(.sql-config-sections .n-collapse-item:last-child) {
+  margin-bottom: 0;
+}
+
+:global(.sql-config-sections .n-collapse-item__header) {
+  min-height: 44px;
+  padding: 12px 14px;
+  color: #1f2937;
+  background: #fff;
+  font-size: 14px;
+}
+
+:global(.sql-config-sections .n-collapse-item__header:hover) {
+  background: #f8fafc;
+}
+
+:global(.sql-config-sections .n-collapse-item__content-wrapper) {
+  border-top: 1px solid #f1f5f9;
+}
+
+:global(.sql-config-sections .n-collapse-item__content-inner) {
+  padding: 14px;
+}
+
+:global(.sql-section-title) {
+  color: #1f2937;
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+}
+
+:global(.sql-config-sections .n-alert) {
+  border-radius: 6px;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:global(.sql-config-sections .n-data-table) {
+  overflow: hidden;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+}
+
+:global(.sql-config-sections .n-data-table .n-data-table-th) {
+  background: #f8fafc;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.sql-config-sections .n-form-item) {
+  margin-bottom: 0;
+}
+
+:global(.sql-config-footer) {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  padding: 12px 16px;
+  border-top: 1px solid #e5e7eb;
+  background: #f7f8fa;
+  box-sizing: border-box;
+}
+
+:global(.sql-config-footer .n-button) {
+  border-radius: 6px;
+}
+
+// SQL 节点的输入表列表：保持与其它节点卡片一致，同时让多个入边清晰可扫读。
+:global(.sql-upstream-list) {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+:global(.sql-upstream-row) {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr) minmax(190px, 0.72fr);
+  align-items: center;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #f8fafc;
+}
+
+:global(.sql-upstream-index) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 28px;
+  height: 24px;
+  border: 1px solid #bfdbfe;
+  border-radius: 5px;
+  color: #2563eb;
+  background: #eff6ff;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .02em;
+}
+
+:global(.sql-upstream-info) {
+  min-width: 0;
+}
+
+:global(.sql-upstream-name) {
+  overflow: hidden;
+  color: #1f2937;
+  font-size: 13px;
+  font-weight: 600;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.sql-upstream-meta) {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+:global(.sql-upstream-alias) {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+:global(.sql-upstream-alias-label) {
+  color: #64748b;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+:global(.sql-editor-actions) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+:global(.sql-field-feedback) {
+  margin-top: 4px;
+  color: #b91c1c;
+  font-size: 12px;
+  line-height: 18px;
+}
+
+:global(.sql-upstream-tags) {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+}
+
+:global(.sql-upstream-tags .n-tag) {
+  cursor: help;
+}
+
+:global(.sql-upstream-tooltip) {
+  min-width: 220px;
+  max-width: 320px;
+  padding: 2px;
+}
+
+:global(.sql-upstream-tooltip-title) {
+  margin-bottom: 6px;
+  color: #f8fafc;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+:global(.sql-upstream-tooltip-fields) {
+  display: grid;
+  gap: 3px;
+}
+
+:global(.sql-upstream-tooltip-field) {
+  display: flex;
+  justify-content: space-between;
+  gap: 18px;
+  color: #e2e8f0;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+:global(.sql-upstream-tooltip-field span:last-child) {
+  color: #94a3b8;
+}
+
+:global(.sql-upstream-tooltip-empty) {
+  color: #cbd5e1;
+  font-size: 11px;
+}
+
+:global(.sql-output-table) {
+  overflow-x: auto;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  background: #fff;
+}
+
+:global(.sql-output-header),
+:global(.sql-output-row) {
+  display: grid;
+  grid-template-columns: 28px minmax(104px, .9fr) minmax(132px, 1.25fr) 100px 76px;
+  align-items: center;
+  gap: 8px;
+  min-width: 560px;
+  padding: 7px 10px;
+}
+
+:global(.sql-output-header) {
+  border-bottom: 1px solid #e2e8f0;
+  color: #475569;
+  background: #f8fafc;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 16px;
+}
+
+:global(.sql-output-row) {
+  min-height: 48px;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+:global(.sql-output-row:last-child) {
+  border-bottom: 0;
+}
+
+:global(.sql-output-index) {
+  color: #64748b;
+  font-size: 12px;
+  text-align: center;
+}
+
+:global(.sql-output-row .n-input),
+:global(.sql-output-row .n-select) {
+  min-width: 0;
+}
+
+:global(.sql-output-actions) {
+  justify-content: flex-start;
+  min-width: 0;
+}
+
+@media (max-width: 640px) {
+  :global(.sql-upstream-row) {
+    grid-template-columns: 30px minmax(0, 1fr);
+  }
+
+  :global(.sql-upstream-alias) {
+    grid-column: 2;
+    grid-template-columns: 68px minmax(0, 1fr);
+  }
+}

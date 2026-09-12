@@ -18,10 +18,10 @@
 /**
  * JOIN 节点配置对话框
  * 与 flinksql-etl 的 JoinConfigDialog.vue 功能对齐:
- *   - 卡片 1: 别名 + 连接类型
- *   - 卡片 2: 主表/查表的关联字段（下拉 from 上游 fields）
- *   - 卡片 3: 输出字段多选 + WHERE 筛选
- *   - 卡片 4: SQL 预览
+ *   - 基本信息
+ *   - 连接与关联字段（支持多组 JOIN KEY）
+ *   - 输出字段映射（源字段 / AS / 输出名）+ WHERE 筛选
+ *   - SQL 预览
  *
  * props:
  *   visible   - boolean
@@ -38,13 +38,12 @@ import {
   NCard,
   NSpace,
   NInput,
-  NRadioGroup,
-  NRadioButton,
   NSelect,
   NButton,
   NDivider,
   NEmpty,
   NTag,
+  NTooltip,
   NForm,
   NFormItem,
   useMessage
@@ -58,14 +57,25 @@ interface UpstreamNode {
   alias: string
   fields: UpstreamField[]
 }
+interface JoinKey {
+  left: string
+  right: string
+}
+interface OutputMapping {
+  source: string
+  field: string
+  alias: string
+}
 interface JoinConfig {
   alias: string
   joinType: 'INNER' | 'LEFT' | 'RIGHT' | 'FULL'
   leftAlias: string
   rightAlias: string
+  joinKeys: JoinKey[]
+  // 兼容早期只保存一组关联字段的配置
   leftKey: string
   rightKey: string
-  selectFields: string  // '*' or 'a.id, b.name'
+  selectFields: string  // 'a.id AS id, b.name AS name'
   where: string
 }
 
@@ -89,9 +99,10 @@ export default defineComponent({
       joinType: 'INNER',
       leftAlias: '',
       rightAlias: '',
+      joinKeys: [],
       leftKey: '',
       rightKey: '',
-      selectFields: '*',
+      selectFields: '',
       where: ''
     })
 
@@ -102,14 +113,21 @@ export default defineComponent({
         if (!v) return
         if (!props.node) return
         const cfg = (props.node?.config || {}) as Partial<JoinConfig>
+        const legacyKeys = cfg.leftKey || cfg.rightKey
+          ? [{ left: cfg.leftKey || '', right: cfg.rightKey || '' }]
+          : []
         Object.assign(form, {
           alias: cfg.alias || '',
           joinType: (cfg.joinType as any) || 'INNER',
           leftAlias: cfg.leftAlias || '',
           rightAlias: cfg.rightAlias || '',
+          joinKeys: Array.isArray(cfg.joinKeys) && cfg.joinKeys.length > 0
+            ? cfg.joinKeys.map((k: any) => ({ left: k.left || k.srcCol || '', right: k.right || k.tgtCol || '' }))
+            : legacyKeys,
           leftKey: cfg.leftKey || '',
           rightKey: cfg.rightKey || '',
-          selectFields: cfg.selectFields || '*',
+          // 历史配置中的 '*' 不再作为有效输出，打开后要求明确配置字段。
+          selectFields: cfg.selectFields && cfg.selectFields !== '*' ? cfg.selectFields : '',
           where: cfg.where || ''
         })
       },
@@ -157,34 +175,89 @@ export default defineComponent({
       } catch { return [] }
     })
 
-    // 上游字段是否还包含已配置的 leftKey / rightKey
-    const leftKeyMissing = computed(() => {
-      if (!form.leftKey) return false
-      return !leftFields.value.some((f) => f.name === form.leftKey)
-    })
-    const rightKeyMissing = computed(() => {
-      if (!form.rightKey) return false
-      return !rightFields.value.some((f) => f.name === form.rightKey)
+    // 新建 JOIN 时自动带入第一组同名字段；用户仍可继续添加多组关联键。
+    watch(
+      () => [props.visible, leftFields.value.length, rightFields.value.length],
+      () => {
+        if (!props.visible || form.joinKeys.length > 0 || leftFields.value.length === 0 || rightFields.value.length === 0) return
+        const common = leftFields.value.find((left) => rightFields.value.some((right) => right.name === left.name))
+        form.joinKeys = [{ left: common?.name || leftFields.value[0].name, right: common?.name || rightFields.value[0].name }]
+      },
+      { immediate: true }
+    )
+
+    const leftKeyMissing = (key: string) => Boolean(key) && !leftFields.value.some((f) => f.name === key)
+    const rightKeyMissing = (key: string) => Boolean(key) && !rightFields.value.some((f) => f.name === key)
+
+    const outputFieldPicker = ref<string | null>(null)
+
+    // 把历史 selectFields（支持 source.field、source.field AS alias）统一转成可编辑映射行。
+    const selectMappings = computed<OutputMapping[]>(() => {
+      const raw = (form.selectFields || '').trim()
+      if (!raw || raw === '*') return []
+      return raw.split(',').map((expr) => {
+        const parts = expr.trim().split(/\s+AS\s+/i)
+        const sourceField = parts[0].trim()
+        const segments = sourceField.split('.').map((item) => item.trim()).filter(Boolean)
+        const field = segments.pop() || sourceField
+        return {
+          source: segments.pop() || '',
+          field,
+          alias: (parts[1] || field).trim()
+        }
+      }).filter((mapping) => mapping.field)
     })
 
-    // selectFields 多选（双向桥接）
-    const selectFieldList = computed<Array<string>>({
-      get() {
-        const raw = (form.selectFields || '').trim()
-        if (!raw || raw === '*') return []
-        return raw
-          .split(',')
-          .map((s) => s.trim())
-          .filter(Boolean)
-      },
-      set(arr: string[]) {
-        if (!arr || arr.length === 0) {
-          form.selectFields = '*'
-        } else {
-          form.selectFields = arr.join(', ')
-        }
-      }
+    const serializeMappings = (mappings: OutputMapping[]) => {
+      form.selectFields = mappings.length > 0
+        ? mappings.map((mapping) => `${mapping.source}.${mapping.field} AS ${mapping.alias.trim()}`).join(', ')
+        : ''
+    }
+
+    const duplicateOutputAliases = computed(() => {
+      const seen = new Set<string>()
+      const duplicates = new Set<string>()
+      selectMappings.value.forEach((mapping) => {
+        const alias = mapping.alias.trim().toLowerCase()
+        if (!alias) return
+        if (seen.has(alias)) duplicates.add(mapping.alias.trim())
+        seen.add(alias)
+      })
+      return [...duplicates]
     })
+
+    const outputMappingError = computed(() => {
+      if (selectMappings.value.some((mapping) => !/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(mapping.alias.trim()))) {
+        return '输出名只能包含字母、数字和下划线，且不能以数字开头。'
+      }
+      if (duplicateOutputAliases.value.length > 0) {
+        return `输出名重复：${duplicateOutputAliases.value.join('、')}，请修改后再保存。`
+      }
+      return ''
+    })
+
+    const addOutputMapping = (value: string | null) => {
+      if (!value) return
+      const [source, field] = value.split('.')
+      const mappings = [...selectMappings.value]
+      if (!mappings.some((mapping) => mapping.source === source && mapping.field === field)) {
+        mappings.push({ source, field, alias: field })
+        serializeMappings(mappings)
+      }
+      outputFieldPicker.value = null
+    }
+
+    const removeOutputMapping = (index: number) => {
+      const mappings = selectMappings.value.filter((_, mappingIndex) => mappingIndex !== index)
+      serializeMappings(mappings)
+    }
+
+    const updateOutputAlias = (index: number, alias: string) => {
+      const mappings = selectMappings.value.map((mapping, mappingIndex) => (
+        mappingIndex === index ? { ...mapping, alias } : mapping
+      ))
+      serializeMappings(mappings)
+    }
 
     // 实时 SQL 预览
     const generatedSql = computed(() => {
@@ -192,24 +265,38 @@ export default defineComponent({
       if (!f.leftAlias || !f.rightAlias) {
         return '-- 请先连入 2 个源（左侧主表 / 左下查表）'
       }
-      if (!f.leftKey || !f.rightKey) {
+      const joinKeys = (f.joinKeys || []).filter((k) => k.left && k.right)
+      if (joinKeys.length === 0) {
         return '-- 请选择关联字段'
       }
-      const cols = (f.selectFields || '*').trim() || '*'
-      let sql = `SELECT ${cols}\nFROM ${f.leftAlias} ${f.joinType} JOIN ${f.rightAlias}\n  ON ${f.leftAlias}.${f.leftKey} = ${f.rightAlias}.${f.rightKey}`
+      if (selectMappings.value.length === 0) {
+        return '-- 请至少选择一个输出字段，不能使用 SELECT *'
+      }
+      const selectSql = selectMappings.value.length > 0
+        ? selectMappings.value.map((mapping) => `${mapping.source}.${mapping.field} AS ${mapping.alias.trim() || mapping.field}`).join(', ')
+        : '*'
+      const onExpr = joinKeys.map((k) => `${f.leftAlias}.${k.left} = ${f.rightAlias}.${k.right}`).join(' AND ')
+      let sql = `SELECT ${selectSql}\nFROM ${f.leftAlias} ${f.joinType} JOIN ${f.rightAlias}\n  ON ${onExpr}`
       if (f.where && f.where.trim()) {
         sql += `\nWHERE ${f.where.trim()}`
       }
       return sql
     })
 
-    // select 选项
-    const leftKeyOptions = computed(() => [
-      ...(leftKeyMissing.value
+    const joinTypeOptions = [
+      { label: '内连接 · INNER', value: 'INNER' },
+      { label: '左连接 · LEFT', value: 'LEFT' },
+      { label: '右连接 · RIGHT', value: 'RIGHT' },
+      { label: '全连接 · FULL', value: 'FULL' }
+    ]
+
+    // 关联字段选项
+    const leftKeyOptions = (key: string) => [
+      ...(leftKeyMissing(key)
         ? [
             {
-              label: `⚠ ${form.leftKey} (已删除)`,
-              value: form.leftKey
+              label: `⚠ ${key} (已删除)`,
+              value: key
             }
           ]
         : []),
@@ -217,13 +304,13 @@ export default defineComponent({
         label: `${f.name} (${f.type})`,
         value: f.name
       }))
-    ])
-    const rightKeyOptions = computed(() => [
-      ...(rightKeyMissing.value
+    ]
+    const rightKeyOptions = (key: string) => [
+      ...(rightKeyMissing(key)
         ? [
             {
-              label: `⚠ ${form.rightKey} (已删除)`,
-              value: form.rightKey
+              label: `⚠ ${key} (已删除)`,
+              value: key
             }
           ]
         : []),
@@ -231,7 +318,16 @@ export default defineComponent({
         label: `${f.name} (${f.type})`,
         value: f.name
       }))
-    ])
+    ]
+
+    const addJoinKey = () => form.joinKeys.push({ left: '', right: '' })
+    const removeJoinKey = (index: number) => {
+      if (form.joinKeys.length <= 1) {
+        form.joinKeys[0] = { left: '', right: '' }
+        return
+      }
+      form.joinKeys.splice(index, 1)
+    }
 
     const selectFieldOptions = computed(() => {
       // NSelect 用 render-prefix 区分主表/查表字段,扁平结构简单可靠
@@ -255,6 +351,11 @@ export default defineComponent({
       return opts
     })
 
+    const outputFieldType = (mapping: OutputMapping) => {
+      const fields = mapping.source === form.rightAlias ? rightFields.value : leftFields.value
+      return fields.find((field) => field.name === mapping.field)?.type || 'STRING'
+    }
+
     function handleSave() {
       const alias = (form.alias || '').trim()
       if (!alias) {
@@ -273,10 +374,22 @@ export default defineComponent({
         message.error('请连入主表(in1)和查表(in2)')
         return
       }
-      if (!form.leftKey || !form.rightKey) {
-        message.error('请选择关联字段')
+      if (selectMappings.value.length === 0) {
+        message.error('至少选择一个输出字段，不能使用 SELECT *')
         return
       }
+      if (outputMappingError.value) {
+        message.error(outputMappingError.value)
+        return
+      }
+      const validKeys = form.joinKeys.filter((k) => k.left && k.right)
+      if (validKeys.length === 0) {
+        message.error('至少配置一组关联字段')
+        return
+      }
+      form.joinKeys = validKeys
+      form.leftKey = validKeys[0].left
+      form.rightKey = validKeys[0].right
       // 别名 → 同步写入 form
       form.alias = alias
       emit('saved', JSON.parse(JSON.stringify(form)))
@@ -296,114 +409,149 @@ export default defineComponent({
       >
         <NDrawerContent title='表连接配置' closable>
         <NSpace vertical size='medium'>
-          {/* 卡片 1: 基本信息 */}
-          <NCard size='small' title={<span><NTag type='primary' size='small' bordered={false}>1</NTag> 基本信息</span>}>
-            <NSpace vertical size='medium'>
-              <div>
-                <div style='margin-bottom: 6px;'>节点别名 <span style='color: #f56c6c;'>*</span></div>
+          {/* 基本信息 */}
+          <NCard class='etl-config-card' size='small' title='基本信息'>
+            <NSpace vertical size='small'>
+              <div style='display: grid; grid-template-columns: 118px minmax(0, 1fr); column-gap: 12px; align-items: center;'>
+                <div>节点名称(别名) <span style='color: #f56c6c;'>*</span></div>
                 <NInput
                   v-model:value={form.alias}
                   placeholder='例如 join1, join2'
-                  style='width: 280px;'
+                  style='width: 100%;'
                 />
-                <span style='color: #999; font-size: 12px; margin-left: 8px;'>全局唯一,用于 SQL 引用</span>
               </div>
-              <div>
-                <div style='margin-bottom: 6px;'>连接类型</div>
-                <NRadioGroup v-model:value={form.joinType}>
-                  <NRadioButton value='INNER'>内连接 INNER</NRadioButton>
-                  <NRadioButton value='LEFT'>左连接 LEFT</NRadioButton>
-                  <NRadioButton value='RIGHT'>右连接 RIGHT</NRadioButton>
-                  <NRadioButton value='FULL'>全连接 FULL</NRadioButton>
-                </NRadioGroup>
+              <div style='display: grid; grid-template-columns: 118px minmax(0, 1fr); column-gap: 12px; align-items: center;'>
+                <div>类型</div>
+                <NTag class='etl-node-type-tag' type='info' size='small'>join</NTag>
               </div>
             </NSpace>
           </NCard>
 
-          {/* 卡片 2: 关联字段 */}
-          <NCard size='small' title={<span><NTag type='primary' size='small' bordered={false}>2</NTag> 关联字段</span>}>
-            <div style='color: #999; font-size: 12px; margin-bottom: 12px;'>
-              主表(in1,左上端口)与查表(in2,左下端口)通过字段关联
-            </div>
-            <div style='display: grid; grid-template-columns: 1fr 1fr; gap: 16px;'>
+          {/* 连接类型与多组关联字段 */}
+          <NCard class='etl-config-card' size='small' title='连接与关联字段'>
+            <div class='etl-join-alias-grid'>
               <div>
-                <div style='margin-bottom: 6px;'>主表别名(只读)</div>
-                <NInput
-                  value={form.leftAlias || '— 连入后会从上游节点自动带入 —'}
-                  readonly
-                  disabled
-                  style='margin-bottom: 12px;'
-                />
-                <div style='margin-bottom: 6px;'>
-                  主表关联字段 <span style='color: #f56c6c;'>*</span>
-                </div>
-                {leftFields.value.length === 0 && !leftKeyMissing.value ? (
-                  <NEmpty size='small' description='先连入主表后会出现字段' />
-                ) : (
-                  <NSelect
-                    v-model:value={form.leftKey}
-                    options={leftKeyOptions.value}
-                    placeholder='从主表字段中选择'
-                    filterable
-                    clearable
-                  />
-                )}
-                {leftKeyMissing.value && (
-                  <div style='margin-top: 6px; padding: 6px 10px; font-size: 12px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px;'>
-                    上游 <b>{form.leftAlias || '主表'}</b> 的 <code>{form.leftKey}</code> 字段已不存在,请重新选择。
-                  </div>
-                )}
+                <div class='etl-join-field-label'>主表别名</div>
+                <NInput value={form.leftAlias || '— 连入后自动带入 —'} readonly disabled />
               </div>
               <div>
-                <div style='margin-bottom: 6px;'>查表别名(只读)</div>
-                <NInput
-                  value={form.rightAlias || '— 连入后会从上游节点自动带入 —'}
-                  readonly
-                  disabled
-                  style='margin-bottom: 12px;'
-                />
-                <div style='margin-bottom: 6px;'>
-                  查表关联字段 <span style='color: #f56c6c;'>*</span>
-                </div>
-                {rightFields.value.length === 0 && !rightKeyMissing.value ? (
-                  <NEmpty size='small' description='先连入查表后会出现字段' />
-                ) : (
-                  <NSelect
-                    v-model:value={form.rightKey}
-                    options={rightKeyOptions.value}
-                    placeholder='从查表字段中选择'
-                    filterable
-                    clearable
-                  />
-                )}
-                {rightKeyMissing.value && (
-                  <div style='margin-top: 6px; padding: 6px 10px; font-size: 12px; color: #b91c1c; background: #fef2f2; border: 1px solid #fecaca; border-radius: 4px;'>
-                    上游 <b>{form.rightAlias || '查表'}</b> 的 <code>{form.rightKey}</code> 字段已不存在,请重新选择。
-                  </div>
-                )}
+                <div class='etl-join-field-label'>查表别名</div>
+                <NInput value={form.rightAlias || '— 连入后自动带入 —'} readonly disabled />
               </div>
             </div>
+            <div class='etl-join-type-row'>
+              <div class='etl-join-field-label'>连接类型</div>
+              <NSelect
+                v-model:value={form.joinType}
+                options={joinTypeOptions}
+                consistent-menu-width={false}
+              />
+            </div>
+            <div class='etl-join-key-toolbar'>
+              <div class='etl-join-field-label'>
+                关联字段 <span class='etl-join-required'>*</span>
+                <NTooltip trigger='hover'>
+                  {{
+                    trigger: () => <span class='etl-help-icon' role='img' aria-label='关联字段说明'>?</span>,
+                    default: () => <span>可添加多组字段配对，多个条件会使用 AND 连接，例如 ID = ID 且 TENANT_ID = TENANT_ID。</span>
+                  }}
+                </NTooltip>
+              </div>
+              <NButton size='small' type='primary' ghost onClick={addJoinKey}>+ 添加关联字段</NButton>
+            </div>
+            <div class='etl-join-key-list'>
+              {form.joinKeys.map((key, index) => (
+                <div class='etl-join-key-row' key={`join-key-${index}`}>
+                  <NSelect
+                    value={key.left || null}
+                    options={leftKeyOptions(key.left)}
+                    placeholder='选择主表字段'
+                    filterable
+                    clearable
+                    onUpdateValue={(value: string) => { key.left = value || '' }}
+                  />
+                  <span class='etl-join-key-equals'>=</span>
+                  <NSelect
+                    value={key.right || null}
+                    options={rightKeyOptions(key.right)}
+                    placeholder='选择查表字段'
+                    filterable
+                    clearable
+                    onUpdateValue={(value: string) => { key.right = value || '' }}
+                  />
+                  <NButton
+                    size='small'
+                    quaternary
+                    type='error'
+                    title={`删除第 ${index + 1} 组关联字段`}
+                    aria-label={`删除第 ${index + 1} 组关联字段`}
+                    onClick={() => removeJoinKey(index)}
+                  >×</NButton>
+                </div>
+              ))}
+            </div>
+            {form.joinKeys.some((key) => leftKeyMissing(key.left) || rightKeyMissing(key.right)) && (
+              <div class='etl-join-warning'>部分关联字段已不存在，请重新选择。</div>
+            )}
           </NCard>
 
-          {/* 卡片 3: 输出与筛选 */}
-          <NCard size='small' title={<span><NTag type='primary' size='small' bordered={false}>3</NTag> 输出与筛选</span>}>
-            <div style='margin-bottom: 6px;'>输出字段 <span style='color: #999; font-size: 12px;'>(不选默认全部 *)</span></div>
-            {leftFields.value.length === 0 && rightFields.value.length === 0 ? (
-              <NEmpty size='small' description='先连入主表和查表后会出现字段' />
-            ) : (
-              <NSelect
-                v-model:value={selectFieldList.value}
-                multiple
-                options={selectFieldOptions.value}
-                placeholder='可多选上游字段(不选默认全部)'
-                max-tag-count={20}
-                style='margin-bottom: 12px;'
-              />
-            )}
-            <div style='margin-top: 6px; color: #999; font-size: 12px; margin-bottom: 12px;'>
-              例如: <code>a.id, b.user_name</code>(全选字段默认 SQL 输出 <code>*</code>)
+          {/* 输出与筛选 */}
+          <NCard class='etl-config-card' size='small' title='输出与筛选'>
+            <div class='etl-output-toolbar'>
+              <div class='etl-join-field-label'>输出字段 <span class='etl-join-required'>*</span><span class='etl-output-default-hint'>必须明确配置</span></div>
+              {leftFields.value.length === 0 && rightFields.value.length === 0 ? (
+                <NEmpty size='small' description='先连入主表和查表后会出现字段' />
+              ) : (
+                <NSelect
+                  v-model:value={outputFieldPicker.value}
+                  options={selectFieldOptions.value}
+                  placeholder='添加输出字段'
+                  filterable
+                  clearable
+                  onUpdateValue={addOutputMapping}
+                />
+              )}
             </div>
-            <div style='margin-bottom: 6px;'>筛选条件 (WHERE)</div>
+            {selectMappings.value.length > 0 && (
+              <div class='etl-output-mapping-table'>
+                <div class='etl-output-mapping-header'>
+                  <span>源字段</span>
+                  <span>表达式</span>
+                  <span>输出名</span>
+                  <span></span>
+                </div>
+                <div class='etl-output-mapping-list'>
+                  {selectMappings.value.map((mapping, index) => (
+                    <div class='etl-output-mapping-row' key={`output-${mapping.source}-${mapping.field}-${index}`}>
+                      <div class='etl-output-source'>
+                        <span>{mapping.source}.{mapping.field}</span>
+                        <small>{outputFieldType(mapping)}</small>
+                      </div>
+                      <span class='etl-output-as'>AS</span>
+                      <NInput
+                        value={mapping.alias}
+                        size='small'
+                        status={outputMappingError.value && duplicateOutputAliases.value.some((alias) => alias.toLowerCase() === mapping.alias.trim().toLowerCase()) ? 'error' : undefined}
+                        placeholder={mapping.field}
+                        onUpdateValue={(value: string) => updateOutputAlias(index, value)}
+                      />
+                      <NButton
+                        size='small'
+                        quaternary
+                        type='error'
+                        title={`移除 ${mapping.source}.${mapping.field}`}
+                        aria-label={`移除 ${mapping.source}.${mapping.field}`}
+                        onClick={() => removeOutputMapping(index)}
+                      >×</NButton>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {outputMappingError.value && (
+              <div class='etl-output-mapping-error'>{outputMappingError.value}</div>
+            )}
+            <div class='etl-join-field-label'>筛选条件 (WHERE)</div>
             <NInput
               v-model:value={form.where}
               type='textarea'
@@ -413,7 +561,7 @@ export default defineComponent({
           </NCard>
 
           {/* 卡片 4: SQL 预览 */}
-          <NCard size='small' title={<span><NTag type='primary' size='small' bordered={false}>4</NTag> SQL 预览</span>}>
+          <NCard class='etl-config-card' size='small' title='SQL 预览'>
             <pre style='background: #1e293b; color: #ecf0ff; padding: 12px; border-radius: 6px; font-size: 12px; margin: 0; white-space: pre-wrap; font-family: Menlo, Consolas, "Courier New", monospace;'>
 {generatedSql.value}
             </pre>

@@ -15,6 +15,8 @@
  * limitations under the License.
  */
 
+import { compileTransformExpression, normalizeTransformOutputs } from './transform-expression'
+
 export interface NodeField {
   key: string
   label: string
@@ -54,13 +56,12 @@ export const NODE_DEFINITIONS: NodeDefinition[] = [
   {
     type: 'transform',
     label: '字段转换',
-    description: '配置列映射规则',
+    description: '可视化配置 Flink SQL 字段转换',
     color: '#f59e0b',
     borderColor: '#d97706',
     category: 'transform',
-    fields: [
-      { key: 'columns', label: '列映射 (JSON)', type: 'textarea', placeholder: '[{"src":"id","dst":"id"},{"src":"name","dst":"user_name"}]' }
-    ]
+    // 字段转换使用专用 TransformConfigDialog，避免让用户直接维护 JSON。
+    fields: []
   },
   {
     type: 'filter',
@@ -157,9 +158,7 @@ export const NODE_DEFINITIONS: NodeDefinition[] = [
       { key: '__sink__', label: '目标数据源', type: 'sink-cascade', required: true },
       { key: 'mode', label: '写入模式', type: 'select', required: true, options: [
         { label: 'INSERT', value: 'insert' },
-        { label: 'REPLACE', value: 'replace' },
-        { label: 'UPSERT', value: 'upsert' },
-        { label: 'TRUNCATE_INSERT', value: 'truncate_insert' }
+        { label: 'REPLACE INTO（主键覆盖）', value: 'replace_into' }
       ]}
     ]
   },
@@ -228,9 +227,12 @@ export function generateSqlFromGraph(
         return `SELECT ${cfg.columns && cfg.columns.length ? cfg.columns.join(', ') : '*'} FROM ${ds}.${db}${table}${filter}`
       }
       case 'transform': {
-        const cols = cfg.columns || '[]'
-        lines.push(`${indent}-- [transform] 字段转换：${cols.substring(0, 60)}`)
-        return `(SELECT * FROM upstream /* 列映射: ${cols.substring(0, 80)} */)`
+        const outputs = normalizeTransformOutputs(cfg).filter((item) => item.enabled !== false && item.name && item.source)
+        const select = outputs.length > 0
+          ? outputs.map((item) => `${compileTransformExpression(item)} AS ${item.name}`).join(', ')
+          : '*'
+        lines.push(`${indent}-- [transform] 字段转换：${outputs.length} 个输出字段`)
+        return `(SELECT ${select} FROM upstream)`
       }
       case 'join': {
         const type = cfg.joinType || 'INNER'
@@ -252,9 +254,12 @@ export function generateSqlFromGraph(
         const ds = cfg.datasourceAlias || 'dst'
         const db = cfg.database ? `${cfg.database}.` : ''
         const table = cfg.table || '?'
-        const mode = cfg.mode || 'insert'
+        const mode = cfg.mode === 'replace_into' || cfg.mode === 'replaceinto' || cfg.mode === 'replace' || cfg.mode === 'upsert'
+          ? 'REPLACE INTO（主键覆盖）'
+          : 'INSERT'
         lines.push(`${indent}-- [sink] 表输出：${ds}.${db}${table} (${mode})`)
-        return `(INSERT INTO ${ds}.${db}${table} SELECT * FROM upstream /* mode=${mode} */)`
+        // Flink SQL 统一使用 INSERT；REPLACE INTO 的主键覆盖语义由 JDBC sink 的 upsert 模式实现。
+        return `(INSERT INTO ${ds}.${db}${table} SELECT * FROM upstream /* mode=${mode === 'REPLACE INTO（主键覆盖）' ? 'upsert' : 'append'} */)`
       }
       case 'preview': {
         const limit = cfg.limit || 100

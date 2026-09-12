@@ -16,11 +16,20 @@ fi
 # Classpath parts: master/worker/api/alert each with their test-scope deps so transitive libs are included.
 # (如果 /tmp/ds-cp-*.txt 不存在, 直接 glob m2 里的所有依赖 jar)
 CP_PARTS=()
+MODULE_CP_FOUND=false
 for module in dolphinscheduler-master dolphinscheduler-worker dolphinscheduler-api dolphinscheduler-alert-server; do
   short=$(echo "$module" | sed 's/dolphinscheduler-//')
   if [ -f "/tmp/ds-cp-$short.txt" ]; then
     CP_PARTS+=("$(cat /tmp/ds-cp-$short.txt)")
+    MODULE_CP_FOUND=true
   fi
+done
+
+# Authentication auto-configuration references Spring Security types even when
+# the full security auto-configuration is disabled. Add the Java 8-compatible
+# 5.7.11 modules explicitly (newer 6.x modules require Java 17).
+for jar in "$M2"/org/springframework/security/spring-security-{config,core,crypto,web}/5.7.11/*.jar; do
+  [ -f "$jar" ] && CP_PARTS+=("$jar")
 done
 
 # All standalone-server provided modules (master, worker, api, alert-server, plus every plugin bundle).
@@ -80,11 +89,11 @@ if [ -n "$OJDBC_JAR" ] && [ -f "$OJDBC_JAR" ]; then
   CP_PARTS+=("$OJDBC_JAR")
 fi
 
-# Standalone-server's own runtime deps (jackson etc.).
-# 如果 /tmp/ds-cp.txt 缺失, 自动生成 (glob m2 里的 jar, 排除高 class file version 的)
-if [ -f "/tmp/ds-cp.txt" ]; then
+# Standalone-server's own runtime deps (jackson etc.). Prefer the Maven-resolved
+# module classpaths above; only use the broad fallback when none were generated.
+if [ -f "/tmp/ds-cp.txt" ] && [ "$MODULE_CP_FOUND" = false ]; then
   CP_PARTS+=("$(cat /tmp/ds-cp.txt)")
-else
+elif [ "$MODULE_CP_FOUND" = false ]; then
   echo "[run.sh] /tmp/ds-cp.txt 缺失, 自动生成 cp..."
   {
     find "$M2" -name '*.jar' \
@@ -98,8 +107,10 @@ else
         # 排除 spring 6.x (class file 61+)
         */spring-*/6.*.*) continue;;
         # 排除 spring-cloud, spring-security 6+
-        */spring-cloud/*) continue;;
-        */spring-security/6.*) continue;;
+        */spring-cloud/*|*/org/springframework/cloud/*) continue;;
+        */spring-security/6.*|*/org/springframework/security/*) continue;;
+        # Logback 1.3+ requires Java 11; the standalone build runs on JDK 8.
+        */logback-classic/1.[345].*|*/logback-core/1.[345].*) continue;;
         # 排除 JDK 17+ 的 jar
         */elasticsearch/8.*) continue;;
         # 排除 netty 5 (JDK 17)
@@ -112,9 +123,16 @@ else
   CP_PARTS+=("$(cat /tmp/ds-cp.txt)")
 fi
 
+# Local ETL/runtime drivers are intentionally outside Maven's module graph.
+for jar in "$PWD"/lib/*.jar; do
+  [ -f "$jar" ] && CP_PARTS+=("$jar")
+done
+
 CP=$(printf '%s:' "${CP_PARTS[@]}")
 # Remove conflicting slf4j bindings — keep only logback.
-CP=$(echo "$CP" | tr ':' '\n' | grep -v -E '/slf4j-simple/|/slf4j-reload4j/|/slf4j-jdk14/|/slf4j-nop/|/log4j-slf4j-impl/' | paste -sd ':' -)
+# Keep exactly the Logback version used by the 3.4.2 Spring Boot baseline;
+# the Maven cache also contains incompatible 1.1.x/1.2.x/1.4.x/1.5.x variants.
+CP=$(echo "$CP" | tr ':' '\n' | awk '!/\/logback-(classic|core)\// || /\/logback-(classic|core)\/1\.2\.11\//' | awk '!/\/org\/springframework\/security\// || /\/spring-security-(config|core|crypto|web)\/5\.7\.11\//' | grep -v -E '/slf4j-simple/|/slf4j-reload4j/|/slf4j-jdk14/|/slf4j-nop/|/slf4j-log4j12/|/log4j-slf4j-impl/|/log4j-over-slf4j/|/org/springframework/cloud/|/org/dinky/|dolphinscheduler-task-aliyunserverlessspark|dolphinscheduler-datasource-dolphindb' | paste -sd ':' -)
 CP="classes:conf:${CP}"
 
 exec /Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-1.8.0_482/Contents/Home/bin/java \
