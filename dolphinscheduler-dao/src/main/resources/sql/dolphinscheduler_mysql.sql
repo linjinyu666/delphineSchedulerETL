@@ -1394,3 +1394,21 @@ CREATE TABLE `t_ds_jdbc_registry_data_change_event`
     PRIMARY KEY (`id`)
 ) ENGINE = InnoDB
   DEFAULT CHARSET = utf8;
+
+-- ETL resource content is kept in the database so the designer does not depend
+-- on the resource storage implementation for reading and editing job JSON.
+CREATE TABLE IF NOT EXISTS `t_ds_etl_content`
+(
+    `id`           bigint       NOT NULL AUTO_INCREMENT COMMENT 'primary key',
+    `full_name`   varchar(512) NOT NULL COMMENT 'absolute ETL resource path',
+    `file_name`   varchar(255) NOT NULL COMMENT 'ETL resource file name',
+    `content`     longtext     NOT NULL COMMENT 'ETL job JSON',
+    `description` varchar(500)          COMMENT 'resource description',
+    `user_id`     bigint                COMMENT 'owner user id',
+    `content_size` bigint      NOT NULL DEFAULT 0 COMMENT 'UTF-8 content size',
+    `create_time` datetime     NOT NULL,
+    `update_time` datetime     NOT NULL,
+    PRIMARY KEY (`id`),
+    UNIQUE KEY `uk_etl_full_name` (`full_name`)
+) ENGINE = InnoDB
+  DEFAULT CHARSET = utf8mb4;

@@ -19,6 +19,7 @@ import { ref, onMounted, watch } from 'vue'
 import { remove, cloneDeep } from 'lodash'
 import { TaskType } from '@/store/project/types'
 import { formatParams } from '@/views/projects/task/components/node/format-data'
+import { viewEtlContent } from '@/service/modules/resources'
 import { useCellUpdate } from './dag-hooks'
 import type { Ref } from 'vue'
 import type { Graph } from '@antv/x6'
@@ -66,6 +67,45 @@ export function useTaskEdit(options: Options) {
     name: ''
   })
   const taskModalVisible = ref(false)
+
+  const extractEtlDatasourceIds = (content: string): number[] => {
+    try {
+      const json = JSON.parse(content)
+      return Array.from(
+        new Set(
+          (json.nodes || [])
+            .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
+            .filter((id: number) => Number.isInteger(id) && id > 0)
+        )
+      )
+    } catch {
+      return []
+    }
+  }
+
+  // The workflow definition may contain an old ETL task snapshot. Refresh it
+  // from the database-backed ETL resource before the workflow is saved, even
+  // when the user opens the editor and clicks Save without opening the node.
+  const hydrateDatabaseBackedEtlTasks = async (definitionValue: EditWorkflowDefinition) => {
+    await Promise.all(
+      definitionValue.taskDefinitionList
+        .filter((task: any) => task.taskType === 'ETL')
+        .map(async (task: any) => {
+          try {
+            const params = JSON.parse(task.taskParams || '{}')
+            if (!params.etlResource) return
+            const result: any = await viewEtlContent({ fullName: params.etlResource })
+            const content = result?.content || result?.data?.content || ''
+            if (!content) return
+            params.etlContent = content
+            params.datasourceIds = extractEtlDatasourceIds(content)
+            task.taskParams = JSON.stringify(params)
+          } catch {
+            // Keep the existing task parameters if the resource cannot be read.
+          }
+        })
+    )
+  }
 
   /**
    * Append a new task
@@ -258,14 +298,18 @@ export function useTaskEdit(options: Options) {
   })
 
   watch(definition, () => {
-    if (definition.value) workflowDefinition.value = definition.value
-  })
+    if (definition.value) {
+      workflowDefinition.value = definition.value
+      void hydrateDatabaseBackedEtlTasks(workflowDefinition.value)
+    }
+  }, { immediate: true })
 
   return {
     currTask,
     taskModalVisible,
     workflowDefinition,
     taskConfirm,
+    hydrateDatabaseBackedEtlTasks,
     taskCancel,
     appendTask,
     editTask,

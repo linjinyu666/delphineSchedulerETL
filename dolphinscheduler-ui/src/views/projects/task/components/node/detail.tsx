@@ -62,7 +62,21 @@ const NodeDetail = defineComponent({
       }
     )
 
-    expose(formRef)
+    expose({
+      value: {
+        validate: (...args: any[]) => formRef.value.validate(...args),
+        getValues: () => {
+          const values = formRef.value.getValues()
+          if (model.taskType === 'ETL') {
+            values.etlContent = model.etlContent
+            values.datasourceIds = model.datasourceIds
+          }
+          return values
+        },
+        setValues: (values: Record<string, unknown>) =>
+          formRef.value.setValues(values)
+      }
+    })
 
     return () => (
       <Form

@@ -138,6 +138,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.Lists;
@@ -208,6 +209,9 @@ public class WorkflowDefinitionServiceImpl extends BaseServiceImpl implements Wo
 
     @Autowired
     private GlobalParamsValidator globalParamsValidator;
+
+    @Autowired
+    private DatabaseEtlContentService databaseEtlContentService;
 
     /**
      * create workflow definition
@@ -365,6 +369,8 @@ public class WorkflowDefinitionServiceImpl extends BaseServiceImpl implements Wo
                     throw new ServiceException(Status.TASK_NAME_DUPLICATE_ERROR, taskDefinitionLog.getName());
                 }
 
+                hydrateDatabaseBackedEtl(taskDefinitionLog);
+
                 if (!checkTaskParameters(taskDefinitionLog.getTaskType(), taskDefinitionLog.getTaskParams())) {
                     log.error(
                             "Generate task definition list failed, the given task definition parameter is invalided, taskName: {}, taskDefinition: {}",
@@ -378,6 +384,48 @@ public class WorkflowDefinitionServiceImpl extends BaseServiceImpl implements Wo
         } catch (Exception e) {
             log.error("Generate task definition list failed, meet an unknown exception", e);
             throw new ServiceException(Status.REQUEST_PARAMS_NOT_VALID_ERROR);
+        }
+    }
+
+    /**
+     * ETL resources are stored in t_ds_etl_content. Persist the current
+     * database snapshot into the workflow task parameters at save time so the
+     * Master can extract dsId and assemble the current datasource credentials
+     * before dispatching the task to Worker. The snapshot contains no live
+     * datasource password; connection fields remain legacy metadata only.
+     */
+    private void hydrateDatabaseBackedEtl(TaskDefinitionLog taskDefinitionLog) {
+        if (!"ETL".equalsIgnoreCase(taskDefinitionLog.getTaskType())
+                || StringUtils.isBlank(taskDefinitionLog.getTaskParams())) {
+            return;
+        }
+        try {
+            ObjectNode params = (ObjectNode) JSONUtils.parseObject(taskDefinitionLog.getTaskParams());
+            String resource = params.path("etlResource").asText("");
+            if (StringUtils.isBlank(resource) || !resource.contains("/etl/")) {
+                return;
+            }
+            String content = databaseEtlContentService.find(resource);
+            if (StringUtils.isBlank(content)) {
+                return;
+            }
+            params.put("etlContent", content);
+            ArrayNode datasourceIds = JSONUtils.createArrayNode();
+            JsonNode nodes = JSONUtils.parseObject(content).path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    JsonNode dsId = node.path("config").path("cascade").path("dsId");
+                    if (dsId.canConvertToInt() && dsId.asInt() > 0 && !datasourceIds.has(dsId.asInt())) {
+                        datasourceIds.add(dsId.asInt());
+                    }
+                }
+            }
+            params.set("datasourceIds", datasourceIds);
+            taskDefinitionLog.setTaskParams(JSONUtils.toJsonString(params));
+            log.info("Hydrated database-backed ETL task: name={}, resource={}, datasourceIds={}",
+                    taskDefinitionLog.getName(), resource, datasourceIds);
+        } catch (Exception e) {
+            log.warn("Cannot hydrate database-backed ETL task: name={}", taskDefinitionLog.getName(), e);
         }
     }
 

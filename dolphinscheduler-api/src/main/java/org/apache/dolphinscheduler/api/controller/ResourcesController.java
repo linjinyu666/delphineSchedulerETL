@@ -320,6 +320,21 @@ public class ResourcesController extends BaseController {
         return Result.success(resourceService.fetchResourceFileContent(fetchFileContentRequest));
     }
 
+    /** ETL editor content endpoint. ETL resources are database-backed and never read from storage. */
+    @GetMapping(value = "/etl-content")
+    @ApiException(VIEW_RESOURCE_FILE_ON_LINE_ERROR)
+    public Result<FetchFileContentResponse> viewEtlContent(
+            @Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+            @RequestParam(value = "fullName") String resourceAbsoluteFilePath) {
+        FetchFileContentRequest request = FetchFileContentRequest.builder()
+                .loginUser(loginUser)
+                .resourceFileAbsolutePath(resourceAbsoluteFilePath)
+                .skipLineNum(0)
+                .limit(Integer.MAX_VALUE)
+                .build();
+        return Result.success(resourceService.fetchResourceFileContent(request));
+    }
+
     @Operation(summary = "downloadResource", description = "DOWNLOAD_RESOURCE_NOTES")
     @Parameters({
             @Parameter(name = "fullName", description = "RESOURCE_FULLNAME", required = true, schema = @Schema(implementation = String.class, example = "test/"))})

@@ -22,6 +22,7 @@ type TaskExecuteType = 'STREAM' | 'BATCH'
 
 type TaskType =
   | 'SHELL'
+  | 'ETL'
   | 'SUB_WORKFLOW'
   | 'PROCEDURE'
   | 'SQL'

@@ -16,6 +16,7 @@
  */
 export type TaskType =
   | 'SHELL'
+  | 'ETL'
   | 'SUB_WORKFLOW'
   | 'PROCEDURE'
   | 'SQL'
@@ -61,6 +62,9 @@ export const TASK_TYPES_MAP = {
   },
   SHELL: {
     alias: 'SHELL'
+  },
+  ETL: {
+    alias: 'ETL'
   },
   SUB_WORKFLOW: {
     alias: 'SUB_WORKFLOW'

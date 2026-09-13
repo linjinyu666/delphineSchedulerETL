@@ -36,6 +36,8 @@ import org.apache.dolphinscheduler.api.dto.resources.RenameDirectoryRequest;
 import org.apache.dolphinscheduler.api.dto.resources.RenameFileDto;
 import org.apache.dolphinscheduler.api.dto.resources.RenameFileRequest;
 import org.apache.dolphinscheduler.api.dto.resources.ResourceComponent;
+import org.apache.dolphinscheduler.api.dto.resources.Directory;
+import org.apache.dolphinscheduler.api.dto.resources.FileLeaf;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileDto;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileFromContentDto;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileFromContentRequest;
@@ -82,6 +84,7 @@ import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
+import java.util.ArrayList;
 import java.util.stream.Collectors;
 
 import javax.servlet.http.HttpServletResponse;
@@ -105,6 +108,9 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
 
     @Autowired
     private StorageOperator storageOperator;
+
+    @Autowired
+    private DatabaseEtlContentService databaseEtlContentService;
 
     @Autowired
     private CreateDirectoryRequestTransformer createDirectoryRequestTransformer;
@@ -177,6 +183,16 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         // todo: use storage proxy
         MultipartFile file = createFileDto.getFile();
         String fileAbsolutePath = createFileDto.getFileAbsolutePath();
+        if (isEtlResourcePath(fileAbsolutePath)) {
+            try {
+                databaseEtlContentService.save(fileAbsolutePath, file.getOriginalFilename(),
+                        new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8), null,
+                        createFileRequest.getLoginUser().getId().longValue());
+                return;
+            } catch (Exception ex) {
+                throw new ServiceException("Save ETL resource to database failed: " + fileAbsolutePath, ex);
+            }
+        }
         String srcLocalTmpFileAbsolutePath = copyFileToLocal(file);
         try {
             storageOperator.upload(srcLocalTmpFileAbsolutePath, fileAbsolutePath, true, false);
@@ -195,9 +211,15 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
                 createFileFromContentRequestTransformer.transform(createFileFromContentRequest);
         createFileFromContentDtoValidator.validate(createFileFromContentDto);
 
-        // todo: use storage proxy
         String fileContent = createFileFromContentDto.getFileContent();
         String fileAbsolutePath = createFileFromContentDto.getFileAbsolutePath();
+        if (isEtlResourcePath(fileAbsolutePath)) {
+            databaseEtlContentService.save(fileAbsolutePath, new File(fileAbsolutePath).getName(), fileContent, null,
+                    createFileFromContentRequest.getLoginUser().getId().longValue());
+            ApiServerMetrics.recordApiResourceUploadSize(fileContent.length());
+            return;
+        }
+        // todo: use storage proxy
         String srcLocalTmpFileAbsolutePath = copyFileToLocal(fileContent);
         try {
             storageOperator.upload(srcLocalTmpFileAbsolutePath, fileAbsolutePath, true, false);
@@ -228,6 +250,16 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
 
         String originFileAbsolutePath = renameFileDto.getOriginFileAbsolutePath();
         String targetFileAbsolutePath = renameFileDto.getTargetFileAbsolutePath();
+        if (isEtlResourcePath(originFileAbsolutePath)) {
+            String content = databaseEtlContentService.find(originFileAbsolutePath);
+            if (content == null) {
+                throw new ServiceException("ETL resource does not exist in database: " + originFileAbsolutePath);
+            }
+            databaseEtlContentService.save(targetFileAbsolutePath, new File(targetFileAbsolutePath).getName(), content,
+                    null, renameFileRequest.getLoginUser().getId().longValue());
+            databaseEtlContentService.delete(originFileAbsolutePath);
+            return;
+        }
         storageOperator.copy(originFileAbsolutePath, targetFileAbsolutePath, true, true);
         log.info("Success rename file: {} -> {} ", originFileAbsolutePath, targetFileAbsolutePath);
     }
@@ -237,6 +269,18 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         UpdateFileDto updateFileDto = updateFileRequestTransformer.transform(updateFileRequest);
         updateFileDtoValidator.validate(updateFileDto);
 
+        if (isEtlResourcePath(updateFileDto.getFileAbsolutePath())) {
+            try {
+                MultipartFile file = updateFileDto.getFile();
+                databaseEtlContentService.save(updateFileDto.getFileAbsolutePath(), file.getOriginalFilename(),
+                        new String(file.getBytes(), java.nio.charset.StandardCharsets.UTF_8), null,
+                        updateFileRequest.getLoginUser().getId().longValue());
+                return;
+            } catch (Exception ex) {
+                throw new ServiceException("Update ETL resource in database failed: "
+                        + updateFileDto.getFileAbsolutePath(), ex);
+            }
+        }
         String srcLocalTmpFileAbsolutePath = copyFileToLocal(updateFileDto.getFile());
         try {
             storageOperator.upload(srcLocalTmpFileAbsolutePath, updateFileDto.getFileAbsolutePath(), true, true);
@@ -269,21 +313,28 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
 
         List<StorageEntity> storageEntities = resourceAbsolutePaths.stream()
                 .flatMap(resourceAbsolutePath -> storageOperator.listStorageEntity(resourceAbsolutePath).stream())
+                .filter(entity -> pagingResourceItemRequest.getResourceType() != ResourceType.ETL || entity.isDirectory())
                 .collect(Collectors.toList());
 
-        List<ResourceItemVO> result = storageEntities
-                .stream()
-                .filter(storageEntity -> storageEntity.getFileName()
+        List<ResourceItemVO> databaseItems = pagingResourceItemRequest.getResourceType() == ResourceType.ETL
+                ? resourceAbsolutePaths.stream().flatMap(path -> databaseEtlContentService.list(path).stream())
+                .map(record -> toResourceItem(record)).collect(Collectors.toList())
+                : new ArrayList<>();
+
+        List<ResourceItemVO> allItems = storageEntities.stream().map(ResourceItemVO::new)
+                .collect(Collectors.toList());
+        allItems.addAll(databaseItems);
+        List<ResourceItemVO> result = allItems.stream()
+                .filter(item -> item.getFileName()
                         .contains(pagingResourceItemRequest.getResourceNameKeyWord()))
                 .skip((long) (pageNo - 1) * pageSize)
                 .limit(pageSize)
-                .map(ResourceItemVO::new)
                 .collect(Collectors.toList());
 
         return PageInfo.<ResourceItemVO>builder()
                 .pageNo(pagingResourceItemRequest.getPageNo())
                 .pageSize(pagingResourceItemRequest.getPageSize())
-                .total(storageEntities.size())
+                .total(allItems.size())
                 .totalList(result)
                 .build();
     }
@@ -293,6 +344,9 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         Tenant tenant = tenantDao.queryOptionalById(loginUser.getTenantId())
                 .orElseThrow(() -> new ServiceException(Status.TENANT_NOT_EXIST, loginUser.getTenantId()));
         String storageBaseDirectory = storageOperator.getStorageBaseDirectory(tenant.getTenantCode(), resourceType);
+        if (resourceType == ResourceType.ETL) {
+            return buildEtlResourceTree(storageBaseDirectory);
+        }
         List<StorageEntity> allResourceFiles = storageOperator.listFileStorageEntityRecursively(storageBaseDirectory);
 
         Visitor visitor = new ResourceTreeVisitor(allResourceFiles);
@@ -306,6 +360,10 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
                 .resourceAbsolutePath(deleteResourceRequest.getResourceAbsolutePath())
                 .build();
         deleteResourceDtoValidator.validate(deleteResourceDto);
+        if (isEtlResourcePath(deleteResourceDto.getResourceAbsolutePath())) {
+            databaseEtlContentService.delete(deleteResourceDto.getResourceAbsolutePath());
+            return;
+        }
         storageOperator.delete(deleteResourceDto.getResourceAbsolutePath(), true);
     }
 
@@ -319,13 +377,21 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
                 .build();
         fetchFileContentDtoValidator.validate(fetchFileContentDto);
 
-        String content = storageOperator
-                .fetchFileContent(
-                        fetchFileContentRequest.getResourceFileAbsolutePath(),
-                        fetchFileContentRequest.getSkipLineNum(),
-                        fetchFileContentRequest.getLimit())
-                .stream()
-                .collect(Collectors.joining("\n"));
+        String resourcePath = fetchFileContentRequest.getResourceFileAbsolutePath();
+        String content = isEtlResourcePath(resourcePath)
+                ? databaseEtlContentService.find(resourcePath)
+                : null;
+        if (content == null) {
+            if (isEtlResourcePath(resourcePath)) {
+                throw new ServiceException("ETL resource does not exist in database: " + resourcePath);
+            }
+            content = storageOperator.fetchFileContent(resourcePath,
+                    fetchFileContentRequest.getSkipLineNum(), fetchFileContentRequest.getLimit())
+                    .stream().collect(Collectors.joining("\n"));
+        } else {
+            content = limitContent(content, fetchFileContentRequest.getSkipLineNum(),
+                    fetchFileContentRequest.getLimit());
+        }
 
         ApiServerMetrics.recordApiResourceDownloadSize(content.length());
 
@@ -340,6 +406,14 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
                 updateFileFromContentRequestTransformer.transform(updateFileContentRequest);
         updateFileFromContentDtoValidator.validate(updateFileFromContentDto);
 
+        if (isEtlResourcePath(updateFileFromContentDto.getFileAbsolutePath())) {
+            databaseEtlContentService.save(updateFileFromContentDto.getFileAbsolutePath(),
+                    new File(updateFileFromContentDto.getFileAbsolutePath()).getName(),
+                    updateFileFromContentDto.getFileContent(), null,
+                    updateFileFromContentDto.getLoginUser().getId().longValue());
+            ApiServerMetrics.recordApiResourceUploadSize(updateFileFromContentDto.getFileContent().length());
+            return;
+        }
         String srcLocalTmpFileAbsolutePath = copyFileToLocal(updateFileFromContentDto.getFileContent());
         try {
             storageOperator.upload(srcLocalTmpFileAbsolutePath, updateFileFromContentDto.getFileAbsolutePath(), true,
@@ -366,7 +440,16 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         String localTmpFileAbsolutePath = FileUtils.getDownloadFilename(fileName);
 
         try {
-            storageOperator.download(downloadFileRequest.getFileAbsolutePath(), localTmpFileAbsolutePath, true);
+            if (isEtlResourcePath(downloadFileRequest.getFileAbsolutePath())) {
+                String content = databaseEtlContentService.find(downloadFileRequest.getFileAbsolutePath());
+                if (content == null) {
+                    throw new ServiceException("ETL resource does not exist in database: "
+                            + downloadFileRequest.getFileAbsolutePath());
+                }
+                FileUtils.writeContent2File(content, localTmpFileAbsolutePath);
+            } else {
+                storageOperator.download(downloadFileRequest.getFileAbsolutePath(), localTmpFileAbsolutePath, true);
+            }
             int length = (int) new File(localTmpFileAbsolutePath).length();
             ApiServerMetrics.recordApiResourceDownloadSize(length);
 
@@ -415,6 +498,68 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         String localTmpFileAbsolutePath = FileUtils.getUploadFileLocalTmpAbsolutePath();
         FileUtils.writeContent2File(fileContent, localTmpFileAbsolutePath);
         return localTmpFileAbsolutePath;
+    }
+
+    private boolean isEtlResourcePath(String path) {
+        return path != null && (path.contains("/etl/") || path.endsWith("/etl"));
+    }
+
+    private ResourceItemVO toResourceItem(DatabaseEtlContentService.ContentRecord record) {
+        ResourceItemVO item = new ResourceItemVO();
+        item.setAlias(record.getFileName());
+        item.setFileName(record.getFileName());
+        item.setFullName(record.getFullName());
+        item.setType(ResourceType.ETL);
+        item.setSize(record.getSize());
+        item.setCreateTime(record.getCreateTime());
+        item.setUpdateTime(record.getUpdateTime());
+        return item;
+    }
+
+    private List<ResourceComponent> buildEtlResourceTree(String baseDirectory) {
+        String prefix = baseDirectory.endsWith("/") ? baseDirectory : baseDirectory + "/";
+        List<ResourceComponent> roots = new ArrayList<>();
+        for (DatabaseEtlContentService.ContentRecord record : databaseEtlContentService.listAll()) {
+            if (!record.getFullName().startsWith(prefix)) {
+                continue;
+            }
+            String relative = record.getFullName().substring(prefix.length());
+            String[] parts = relative.split("/");
+            List<ResourceComponent> level = roots;
+            String current = prefix;
+            for (int i = 0; i < parts.length; i++) {
+                String part = parts[i];
+                current += part;
+                boolean leaf = i == parts.length - 1;
+                ResourceComponent component = level.stream()
+                        .filter(item -> part.equals(item.getName())).findFirst().orElse(null);
+                if (component == null) {
+                    component = leaf ? new FileLeaf() : new Directory();
+                    component.setName(part);
+                    component.setFullName(current);
+                    component.setCurrentDir(prefix);
+                    component.setType(ResourceType.ETL);
+                    level.add(component);
+                }
+                if (!leaf) {
+                    level = component.getChildren();
+                    current += "/";
+                }
+            }
+        }
+        return roots;
+    }
+
+    private String limitContent(String content, Integer skipLineNum, Integer limit) {
+        if (skipLineNum == null && limit == null) {
+            return content;
+        }
+        String[] lines = content.split("\\r?\\n", -1);
+        int start = Math.min(Math.max(skipLineNum == null ? 0 : skipLineNum, 0), lines.length);
+        int end = limit == null || limit <= 0
+                ? lines.length
+                : Math.min(start + limit, lines.length);
+        return String.join("\n", java.util.Arrays.copyOfRange(lines, start, end));
     }
 
 }

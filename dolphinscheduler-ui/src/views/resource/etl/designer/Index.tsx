@@ -53,7 +53,7 @@ import { Graph, Node, Edge } from '@antv/x6'
 import {
   queryBaseDir,
   queryResourceList,
-  viewResource,
+  viewEtlContent,
   updateResourceContent,
   onlineCreateResource
 } from '@/service/modules/resources'
@@ -430,6 +430,7 @@ export default defineComponent({
 
     const buildGraph = () => {
       if (!paperEl.value) return
+      if (graph.value) return
       if (!minimapEl.value) {
         console.warn('[etl-designer] minimapEl not mounted yet, retry next tick')
         setTimeout(buildGraph, 50)
@@ -514,6 +515,13 @@ export default defineComponent({
           padding: 10
         }
       })
+
+      // Publish the graph immediately after construction.  Registering the
+      // interaction handlers below must not delay restoration of persisted
+      // nodes; if one handler is unavailable in a particular X6 build, the
+      // canvas would otherwise exist while graph.value stayed empty.
+      graph.value = g
+      ;(window as any).__etlGraph = g
 
       g.on('node:click', ({ node }: { node: Node }) => {
         activeNodeId.value = node.id
@@ -924,6 +932,17 @@ export default defineComponent({
     const fetchJobData = async () => {
       loading.value = true
       try {
+        // The graph is created after both the canvas and minimap refs are
+        // mounted.  When the designer is opened directly, the API request can
+        // finish before that asynchronous retry completes; in that case
+        // addNodeByType silently ignores every restored node.  Wait for the
+        // graph explicitly before restoring database-backed content.
+        for (let i = 0; i < 40 && !graph.value; i++) {
+          await new Promise((resolve) => setTimeout(resolve, 50))
+        }
+        if (!graph.value) {
+          console.warn('[etl-designer] graph was not ready before restoring job data')
+        }
         const { data: dir } = await queryBaseDir({ type: 'ETL' })
         // 兜底：dir 可能是字符串，也可能是 { data: '...' } 包装
         const dirStr: string =
@@ -972,18 +991,20 @@ export default defineComponent({
           saveDir.value = requestedDir
           fullName.value = requestedDir + jobName.value + '.json'
           try {
-            const res: any = await viewResource({
-              fullName: fullName.value,
-              tenantCode: '',
-              skipLineNum: 0,
-              limit: -1
-            })
+            const res: any = await viewEtlContent({ fullName: fullName.value })
             const raw = res.content || ''
             let parsed: any = { name: jobName.value, description: '', nodes: [], edges: [] }
             try {
               parsed = raw ? JSON.parse(raw) : parsed
             } catch (e) {
-              // 兼容旧 json
+              // 某些历史保存链路会把整个 JSON 的换行编码成字面量
+              // "\\n"，先还原控制字符再解析，避免编辑器恢复为空白。
+              try {
+                parsed = JSON.parse(raw.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t'))
+              } catch (normalizedError) {
+                // 兼容旧 json
+                console.warn('[etl-designer] JSON parse failed', String((normalizedError as any)?.message || normalizedError), raw.slice(0, 120))
+              }
             }
             description.value = parsed.description || ''
             if (parsed.saveDir && parsed.saveDir.startsWith(base)) {
@@ -991,6 +1012,7 @@ export default defineComponent({
             }
 
             await nextTick()
+            console.info('[etl-designer] restoring job data', fullName.value, raw.length, Array.isArray(parsed.nodes) ? parsed.nodes.length : 0, !!graph.value, JSON.stringify((parsed.nodes || []).map((n: any) => n.type)))
             ;(parsed.nodes || []).forEach((n: any) => {
               addNodeByType(n.type, n.x, n.y, n.config, n.label, n.id)
             })
@@ -1028,6 +1050,7 @@ export default defineComponent({
             regeneratePreview()
           } catch (e: any) {
             // 文件不存在也无所谓（新建场景）
+            console.warn('[etl-designer] restore content failed', e?.message || e)
           }
         } else {
           // 新建：使用列表页当前目录，未传目录时回到根目录
@@ -1984,6 +2007,7 @@ export default defineComponent({
 
     onMounted(async () => {
       buildGraph()
+      await nextTick()
       await fetchJobData()
       await loadDatasources()
     })

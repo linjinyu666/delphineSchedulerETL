@@ -150,7 +150,7 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
 
         String password = connectionParam.getPassword();
 
-        if (StringUtils.isBlank(password)) {
+        if (StringUtils.isBlank(password) || Constants.XXXXXX.equals(password)) {
             String oldConnectionParams = dataSource.getConnectionParams();
             ObjectNode oldParams = JSONUtils.parseObject(oldConnectionParams);
             connectionParam.setPassword(oldParams.path(Constants.PASSWORD).asText());

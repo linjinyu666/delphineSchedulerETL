@@ -89,7 +89,7 @@ const DetailModal = defineComponent({
 
     const onTest = async () => {
       await state.detailFormRef.validate()
-      testConnect()
+      testConnect(props.id)
     }
 
     const onChangeType = changeType

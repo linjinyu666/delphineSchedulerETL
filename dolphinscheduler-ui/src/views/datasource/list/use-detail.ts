@@ -21,6 +21,7 @@ import {
   createDataSource,
   updateDataSource,
   connectDataSource,
+  connectionTest,
   verifyDataSourceName
 } from '@/service/modules/data-source'
 import { useI18n } from 'vue-i18n'
@@ -38,6 +39,9 @@ export function useDetail(getFieldsValue: Function) {
 
   const formatParams = (): IDataSource => {
     const values = getFieldsValue()
+    // The API intentionally returns a masked password when editing an
+    // existing datasource. Never send that placeholder back as a new secret.
+    if (values.password === '******') values.password = ''
     return {
       ...values,
       other: values.other ? JSON.parse(values.other) : null
@@ -53,11 +57,14 @@ export function useDetail(getFieldsValue: Function) {
     return dataSourceRes
   }
 
-  const testConnect = async () => {
+  const testConnect = async (dataSourceId?: number) => {
     if (status.testing) return
     status.testing = true
     try {
-      const res = await connectDataSource(formatParams())
+      const values = getFieldsValue()
+      const res = dataSourceId && (!values.password || values.password === '******')
+        ? await connectionTest(dataSourceId)
+        : await connectDataSource(formatParams())
       window.$message.success(
         res && res.msg
           ? res.msg

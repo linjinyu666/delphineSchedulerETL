@@ -88,10 +88,14 @@ import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
 
+import org.springframework.jdbc.core.JdbcTemplate;
+
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.baomidou.mybatisplus.core.conditions.query.QueryWrapper;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.base.Strings;
 import com.google.common.collect.Lists;
@@ -102,6 +106,9 @@ import com.google.common.collect.Lists;
 @Component
 @Slf4j
 public class ProcessServiceImpl implements ProcessService {
+
+    @Autowired
+    private JdbcTemplate jdbcTemplate;
 
     @Autowired
     private UserMapper userMapper;
@@ -434,6 +441,7 @@ public class ProcessServiceImpl implements ProcessService {
         List<TaskDefinitionLog> newTaskDefinitionLogs = new ArrayList<>();
         List<TaskDefinitionLog> updateTaskDefinitionLogs = new ArrayList<>();
         for (TaskDefinitionLog taskDefinitionLog : taskDefinitionLogs) {
+            hydrateDatabaseBackedEtl(taskDefinitionLog);
             taskDefinitionLog.setProjectCode(projectCode);
             taskDefinitionLog.setUpdateTime(now);
             taskDefinitionLog.setOperateTime(now);
@@ -510,6 +518,42 @@ public class ProcessServiceImpl implements ProcessService {
         }
 
         return (insertResult & updateResult) > 0 ? 1 : Constants.EXIT_CODE_SUCCESS;
+    }
+
+    private void hydrateDatabaseBackedEtl(TaskDefinitionLog taskDefinitionLog) {
+        if (!"ETL".equalsIgnoreCase(taskDefinitionLog.getTaskType())
+                || StringUtils.isBlank(taskDefinitionLog.getTaskParams())) {
+            return;
+        }
+        try {
+            ObjectNode params = (ObjectNode) JSONUtils.parseObject(taskDefinitionLog.getTaskParams());
+            String resource = params.path("etlResource").asText("");
+            if (StringUtils.isBlank(resource) || !resource.contains("/etl/")) {
+                return;
+            }
+            String content = jdbcTemplate.query("SELECT content FROM t_ds_etl_content WHERE full_name=?",
+                    ps -> ps.setString(1, resource), rs -> rs.next() ? rs.getString(1) : null);
+            if (StringUtils.isBlank(content)) {
+                return;
+            }
+            params.put("etlContent", content);
+            ArrayNode ids = JSONUtils.createArrayNode();
+            JsonNode nodes = JSONUtils.parseObject(content).path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    JsonNode id = node.path("config").path("cascade").path("dsId");
+                    if (id.canConvertToInt() && id.asInt() > 0 && !ids.has(id.asInt())) {
+                        ids.add(id.asInt());
+                    }
+                }
+            }
+            params.set("datasourceIds", ids);
+            taskDefinitionLog.setTaskParams(JSONUtils.toJsonString(params));
+            log.info("Hydrated database-backed ETL at task save: name={}, datasourceIds={}",
+                    taskDefinitionLog.getName(), ids);
+        } catch (Exception e) {
+            log.warn("Cannot hydrate database-backed ETL at task save: name={}", taskDefinitionLog.getName(), e);
+        }
     }
 
     /**

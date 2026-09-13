@@ -18,6 +18,7 @@
 import { useFlink } from './use-flink'
 import { useFlinkStream } from './use-flink-stream'
 import { useShell } from './use-shell'
+import { useEtl } from './use-etl'
 import { useSubWorkflow } from './use-sub-workflow'
 import { usePython } from './use-python'
 import { useSpark } from './use-spark'
@@ -55,6 +56,7 @@ import { useAliyunServerlessSpark } from './use-aliyun-serverless-spark'
 
 export default {
   SHELL: useShell,
+  ETL: useEtl,
   SUB_WORKFLOW: useSubWorkflow,
   PYTHON: usePython,
   SPARK: useSpark,

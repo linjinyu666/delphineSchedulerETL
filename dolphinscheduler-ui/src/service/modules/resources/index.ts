@@ -146,3 +146,12 @@ export function viewResource(
     timeout: 0
   })
 }
+
+export function viewEtlContent(params: FullNameReq): any {
+  return axios({
+    url: '/resources/etl-content',
+    method: 'get',
+    params,
+    timeout: 0
+  })
+}

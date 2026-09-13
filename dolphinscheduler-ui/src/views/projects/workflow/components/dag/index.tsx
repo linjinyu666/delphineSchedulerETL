@@ -107,6 +107,7 @@ export default defineComponent({
     // Edit task
     const {
       taskConfirm,
+      hydrateDatabaseBackedEtlTasks,
       taskModalVisible,
       currTask,
       taskCancel,
@@ -214,7 +215,7 @@ export default defineComponent({
       }
     }
     const { getConnects, getLocations } = useBusinessMapper()
-    const onSave = (saveForm: any) => {
+    const onSave = async (saveForm: any) => {
       const edges = graph.value?.getEdges() || []
       const nodes = graph.value?.getNodes() || []
       if (!nodes.length) {
@@ -228,6 +229,7 @@ export default defineComponent({
         workflowDefinition.value.taskDefinitionList as any
       )
       const locations = getLocations(nodes)
+      await hydrateDatabaseBackedEtlTasks(workflowDefinition.value)
       context.emit('save', {
         taskDefinitions: workflowDefinition.value.taskDefinitionList,
         saveForm,

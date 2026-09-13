@@ -81,6 +81,9 @@ import org.springframework.transaction.annotation.Transactional;
 
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
+import com.fasterxml.jackson.databind.node.ObjectNode;
 import com.google.common.collect.Lists;
 
 @Service
@@ -113,6 +116,9 @@ public class TaskDefinitionServiceImpl extends BaseServiceImpl implements TaskDe
 
     @Autowired
     private ProcessService processService;
+
+    @Autowired
+    private DatabaseEtlContentService databaseEtlContentService;
 
     @Autowired
     private WorkflowDefinitionLogMapper workflowDefinitionLogMapper;
@@ -234,6 +240,7 @@ public class TaskDefinitionServiceImpl extends BaseServiceImpl implements TaskDe
             log.warn("Parameter taskDefinitionJson is invalid.");
             throw new ServiceException(Status.DATA_IS_NOT_VALID, taskDefinitionJsonObj);
         }
+        hydrateDatabaseBackedEtl(taskDefinitionToUpdate);
         if (!checkTaskParameters(taskDefinitionToUpdate.getTaskType(), taskDefinitionToUpdate.getTaskParams())) {
             throw new ServiceException(Status.WORKFLOW_NODE_S_PARAMETER_INVALID, taskDefinitionToUpdate.getName());
         }
@@ -320,6 +327,41 @@ public class TaskDefinitionServiceImpl extends BaseServiceImpl implements TaskDe
             }
         }
         return taskDefinitionToUpdate;
+    }
+
+    private void hydrateDatabaseBackedEtl(TaskDefinitionLog taskDefinitionLog) {
+        if (!"ETL".equalsIgnoreCase(taskDefinitionLog.getTaskType())
+                || StringUtils.isBlank(taskDefinitionLog.getTaskParams())) {
+            return;
+        }
+        try {
+            ObjectNode params = (ObjectNode) JSONUtils.parseObject(taskDefinitionLog.getTaskParams());
+            String resource = params.path("etlResource").asText("");
+            if (StringUtils.isBlank(resource) || !resource.contains("/etl/")) {
+                return;
+            }
+            String content = databaseEtlContentService.find(resource);
+            if (StringUtils.isBlank(content)) {
+                return;
+            }
+            params.put("etlContent", content);
+            ArrayNode ids = JSONUtils.createArrayNode();
+            JsonNode nodes = JSONUtils.parseObject(content).path("nodes");
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    JsonNode id = node.path("config").path("cascade").path("dsId");
+                    if (id.canConvertToInt() && id.asInt() > 0 && !ids.has(id.asInt())) {
+                        ids.add(id.asInt());
+                    }
+                }
+            }
+            params.set("datasourceIds", ids);
+            taskDefinitionLog.setTaskParams(JSONUtils.toJsonString(params));
+            log.info("Hydrated database-backed ETL task update: name={}, datasourceIds={}",
+                    taskDefinitionLog.getName(), ids);
+        } catch (Exception e) {
+            log.warn("Cannot hydrate database-backed ETL task update: name={}", taskDefinitionLog.getName(), e);
+        }
     }
 
     /**

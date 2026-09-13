@@ -17,9 +17,16 @@
 
 package org.apache.dolphinscheduler.plugin.task.etl;
 
+import org.apache.dolphinscheduler.plugin.task.api.enums.ResourceType;
 import org.apache.dolphinscheduler.plugin.task.api.parameters.AbstractParameters;
+import org.apache.dolphinscheduler.plugin.task.api.parameters.resource.ResourceParametersHelper;
 
 import org.apache.commons.lang3.StringUtils;
+
+import java.util.List;
+
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.node.ArrayNode;
 
 /**
  * ETL task parameters — 直接对接 flink-learning 的
@@ -57,6 +64,19 @@ public class EtlParameters extends AbstractParameters {
      */
     private String sql;
 
+    /** Resource Center ETL JSON path. When set, sources/sinks/sql are loaded from its etl block. */
+    private String etlResource;
+
+    /** Database-backed ETL JSON snapshot carried with the workflow task definition. */
+    private String etlContent;
+
+    private String etlVersion = "LATEST";
+
+    private String etlParameters;
+
+    /** Datasource ids selected by the ETL designer; resolved by Master at runtime. */
+    private List<Integer> datasourceIds;
+
     /**
      * Flink 并行度，默认 2
      */
@@ -80,7 +100,47 @@ public class EtlParameters extends AbstractParameters {
 
     @Override
     public boolean checkParameters() {
-        return StringUtils.isNotBlank(sources) && StringUtils.isNotBlank(sql);
+        return StringUtils.isNotBlank(etlResource)
+                || (StringUtils.isNotBlank(sources) && StringUtils.isNotBlank(sql));
+    }
+
+    /**
+     * Extract datasource ids from the database-backed ETL definition. Master
+     * resolves these ids to the current connection parameters before sending
+     * the task to Worker, so an ETL definition never needs to contain a
+     * password or a frozen host address.
+     */
+    @Override
+    public ResourceParametersHelper getResources() {
+        ResourceParametersHelper resources = new ResourceParametersHelper();
+        try {
+            if (datasourceIds != null) {
+                for (Integer dsId : datasourceIds) {
+                    if (dsId != null && dsId > 0) {
+                        resources.put(ResourceType.DATASOURCE, dsId);
+                    }
+                }
+            }
+            if (StringUtils.isNotBlank(etlContent)) {
+                JsonNode nodes =
+                        org.apache.dolphinscheduler.common.utils.JSONUtils.parseObject(etlContent).path("nodes");
+                if (nodes.isArray()) {
+                    for (JsonNode node : (ArrayNode) nodes) {
+                        JsonNode cascade = node.path("config").path("cascade");
+                        if (cascade.has("dsId") && cascade.path("dsId").canConvertToInt()) {
+                            int dsId = cascade.path("dsId").asInt();
+                            if (dsId > 0) {
+                                resources.put(ResourceType.DATASOURCE, dsId);
+                            }
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // Validation/parsing remains in EtlTask.init; resource extraction
+            // should not make legacy non-database ETL parameters unusable.
+        }
+        return resources;
     }
 
     public String getSources() {
@@ -105,6 +165,33 @@ public class EtlParameters extends AbstractParameters {
 
     public void setSql(String sql) {
         this.sql = sql;
+    }
+
+    public String getEtlResource() {
+        return etlResource;
+    }
+    public void setEtlResource(String etlResource) {
+        this.etlResource = etlResource;
+    }
+
+    public String getEtlContent() {
+        return etlContent;
+    }
+
+    public void setEtlContent(String etlContent) {
+        this.etlContent = etlContent;
+    }
+    public String getEtlVersion() {
+        return etlVersion;
+    }
+    public void setEtlVersion(String etlVersion) {
+        this.etlVersion = etlVersion;
+    }
+    public String getEtlParameters() {
+        return etlParameters;
+    }
+    public void setEtlParameters(String etlParameters) {
+        this.etlParameters = etlParameters;
     }
 
     public int getParallelism() {
@@ -137,5 +224,13 @@ public class EtlParameters extends AbstractParameters {
 
     public void setLibDir(String libDir) {
         this.libDir = libDir;
+    }
+
+    public List<Integer> getDatasourceIds() {
+        return datasourceIds;
+    }
+
+    public void setDatasourceIds(List<Integer> datasourceIds) {
+        this.datasourceIds = datasourceIds;
     }
 }

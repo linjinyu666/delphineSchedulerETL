@@ -116,6 +116,17 @@ export function formatParams(data: INodeData): {
     taskParams.socketTimeout = data.socketTimeout
   }
 
+  if (data.taskType === 'ETL') {
+    taskParams.etlResource = data.etlResource
+    taskParams.etlVersion = data.etlVersion
+    taskParams.etlParameters = data.etlParameters
+    taskParams.etlContent = data.etlContent
+    taskParams.datasourceIds =
+      data.datasourceIds?.length
+        ? data.datasourceIds
+        : extractEtlDatasourceIds(data.etlContent)
+  }
+
   if (data.taskType === 'SQOOP') {
     taskParams.jobType = data.isCustomTask ? 'CUSTOM' : 'TEMPLATE'
     taskParams.localParams = data.localParams
@@ -534,6 +545,19 @@ export function formatParams(data: INodeData): {
     params.taskDefinitionJsonObj.timeoutNotifyStrategy = ''
   }
   return params
+}
+
+function extractEtlDatasourceIds(content?: string): number[] {
+  if (!content) return []
+  try {
+    const parsed = JSON.parse(content.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t'))
+    const ids = (parsed.nodes || [])
+      .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
+      .filter((id: number) => Number.isInteger(id) && id > 0)
+    return [...new Set(ids)]
+  } catch {
+    return []
+  }
 }
 
 export function formatModel(data: ITaskData) {

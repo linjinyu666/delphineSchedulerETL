@@ -17,29 +17,38 @@
 
 package org.apache.dolphinscheduler.plugin.task.etl;
 
+import static org.apache.dolphinscheduler.plugin.datasource.api.utils.PasswordUtils.decodePassword;
+
 import org.apache.dolphinscheduler.common.constants.Constants;
 import org.apache.dolphinscheduler.common.utils.JSONUtils;
+import org.apache.dolphinscheduler.plugin.datasource.api.utils.DataSourceUtils;
 import org.apache.dolphinscheduler.plugin.task.api.AbstractTask;
 import org.apache.dolphinscheduler.plugin.task.api.ShellCommandExecutor;
 import org.apache.dolphinscheduler.plugin.task.api.TaskCallBack;
 import org.apache.dolphinscheduler.plugin.task.api.TaskConstants;
 import org.apache.dolphinscheduler.plugin.task.api.TaskException;
 import org.apache.dolphinscheduler.plugin.task.api.TaskExecutionContext;
+import org.apache.dolphinscheduler.plugin.task.api.enums.ResourceType;
 import org.apache.dolphinscheduler.plugin.task.api.model.TaskResponse;
 import org.apache.dolphinscheduler.plugin.task.api.parameters.AbstractParameters;
+import org.apache.dolphinscheduler.plugin.task.api.parameters.resource.DataSourceParameters;
 import org.apache.dolphinscheduler.plugin.task.api.shell.IShellInterceptorBuilder;
 import org.apache.dolphinscheduler.plugin.task.api.shell.ShellInterceptorBuilderFactory;
+import org.apache.dolphinscheduler.spi.datasource.BaseConnectionParam;
 
 import org.apache.commons.lang3.StringUtils;
 
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
 import lombok.extern.slf4j.Slf4j;
+
+import com.fasterxml.jackson.databind.JsonNode;
 
 /**
  * ETL Task — 透传层：把 {@link EtlParameters} 4 个字段写到 properties，调
@@ -76,6 +85,8 @@ public class EtlTask extends AbstractTask {
     @Override
     public void init() {
         etlParameters = JSONUtils.parseObject(taskRequest.getTaskParams(), EtlParameters.class);
+        resolveResourceDefinition();
+        resolveDatasourceConnections();
         if (etlParameters == null || !etlParameters.checkParameters()) {
             throw new TaskException("etl task params is not valid (sources + sql required)");
         }
@@ -84,6 +95,149 @@ public class EtlTask extends AbstractTask {
                 countEntries(etlParameters.getSources()),
                 countEntries(etlParameters.getSinks()),
                 etlParameters.getParallelism());
+    }
+
+    /** Replace masked/frozen connection fields with the current DS datasource values. */
+    private void resolveDatasourceConnections() {
+        boolean hasContent = StringUtils.isNotBlank(etlParameters.getEtlContent());
+        boolean hasDatasourceIds = etlParameters.getDatasourceIds() != null
+                && !etlParameters.getDatasourceIds().isEmpty();
+        if (!hasContent && !hasDatasourceIds) {
+            return;
+        }
+        if (taskRequest.getResourceParametersHelper() == null) {
+            throw new TaskException("ETL datasource resources are missing; datasource config must be resolved by dsId");
+        }
+        try {
+            JsonNode nodes = hasContent
+                    ? JSONUtils.parseObject(etlParameters.getEtlContent()).path("nodes")
+                    : JSONUtils.parseObject("[]");
+            java.util.Map<String, DataSourceParameters> resolved = new java.util.HashMap<>();
+            if (etlParameters.getDatasourceIds() != null) {
+                for (Integer dsId : etlParameters.getDatasourceIds()) {
+                    resolveDatasource(dsId, resolved);
+                }
+            }
+            if (nodes.isArray()) {
+                for (JsonNode node : nodes) {
+                    JsonNode cascade = node.path("config").path("cascade");
+                    String dsId = cascade.path("dsId").asText("");
+                    if (dsId.isEmpty() || resolved.containsKey(dsId)) {
+                        continue;
+                    }
+                    resolveDatasource(Integer.parseInt(dsId), resolved);
+                }
+            }
+            log.info("ETL datasource resolution: requested={}, resolved={}",
+                    resolved.keySet(), resolved.size());
+            // The connection fields in etl.sources/etl.sinks are only legacy
+            // metadata. rewriteConnections replaces URL/user/password/driver
+            // exclusively with the datasource selected by dsId.
+            etlParameters.setSources(rewriteConnections(etlParameters.getSources(), resolved));
+            etlParameters.setSinks(rewriteConnections(etlParameters.getSinks(), resolved));
+        } catch (Exception e) {
+            throw new TaskException("Cannot resolve ETL datasource connections from dsId", e);
+        }
+    }
+
+    private void resolveDatasource(Integer dsId, java.util.Map<String, DataSourceParameters> resolved) {
+        if (dsId == null || dsId <= 0 || resolved.containsKey(String.valueOf(dsId))) {
+            return;
+        }
+        DataSourceParameters ds = (DataSourceParameters) taskRequest.getResourceParametersHelper()
+                .getResourceParameters(ResourceType.DATASOURCE, dsId);
+        if (ds != null) {
+            resolved.put(String.valueOf(dsId), ds);
+        } else {
+            throw new TaskException("Cannot find datasource parameters for dsId=" + dsId);
+        }
+    }
+
+    private String rewriteConnections(String specs, java.util.Map<String, DataSourceParameters> resolved) {
+        if (StringUtils.isBlank(specs)) {
+            return specs;
+        }
+        StringBuilder result = new StringBuilder();
+        for (String spec : specs.split(";")) {
+            if (StringUtils.isBlank(spec)) {
+                continue;
+            }
+            String[] fields = spec.split("\\|", -1);
+            if (fields.length < 4) {
+                appendSpec(result, spec);
+                continue;
+            }
+            String matchedId = null;
+            // Match by the node-generated table/alias spec against the ETL
+            // content's datasource id and table metadata.
+            if (StringUtils.isNotBlank(etlParameters.getEtlContent())) {
+                for (JsonNode node : JSONUtils.parseObject(etlParameters.getEtlContent()).path("nodes")) {
+                    JsonNode cascade = node.path("config").path("cascade");
+                    if (fields.length > 5 && fields[4].equals(cascade.path("table").asText(""))
+                            && fields[5]
+                                    .equals(node.path("config").path("alias").asText(node.path("label").asText("")))) {
+                        matchedId = cascade.path("dsId").asText("");
+                        break;
+                    }
+                }
+            }
+            DataSourceParameters ds = matchedId == null && resolved.size() == 1
+                    ? resolved.values().iterator().next()
+                    : (matchedId == null ? null : resolved.get(matchedId));
+            if (ds != null) {
+                BaseConnectionParam conn = (BaseConnectionParam) DataSourceUtils.buildConnectionParams(ds.getType(),
+                        ds.getConnectionParams());
+                String password = decodePassword(conn.getPassword());
+                if (StringUtils.isBlank(password) || "******".equals(password)) {
+                    throw new TaskException("Datasource password was not resolved from DS database");
+                }
+                fields[0] = DataSourceUtils.getJdbcUrl(ds.getType(), conn);
+                fields[1] = conn.getUser();
+                fields[2] = password;
+                fields[3] = conn.getDriverClassName();
+                appendSpec(result, String.join("|", fields));
+            } else {
+                appendSpec(result, spec);
+            }
+        }
+        return result.toString();
+    }
+
+    private static void appendSpec(StringBuilder result, String spec) {
+        if (result.length() > 0)
+            result.append(';');
+        result.append(spec);
+    }
+
+    private void resolveResourceDefinition() {
+        // A database-backed ETL definition is authoritative. The task
+        // definition may still contain a legacy/frozen sources string with a
+        // masked password, so do not keep it merely because it is non-empty.
+        if (StringUtils.isBlank(etlParameters.getEtlContent())
+                && (StringUtils.isBlank(etlParameters.getEtlResource())
+                        || StringUtils.isNotBlank(etlParameters.getSources()))) {
+            return;
+        }
+        Path resource = Paths.get(etlParameters.getEtlResource());
+        try {
+            String content;
+            if (StringUtils.isNotBlank(etlParameters.getEtlContent())) {
+                content = etlParameters.getEtlContent();
+            } else if (Files.exists(resource)) {
+                content = new String(Files.readAllBytes(resource), StandardCharsets.UTF_8);
+            } else {
+                throw new TaskException("ETL resource content is not present in task definition: " + resource);
+            }
+            JsonNode etl = JSONUtils.parseObject(content).path("etl");
+            etlParameters.setSources(etl.path("sources").asText(""));
+            etlParameters.setSinks(etl.path("sinks").asText(""));
+            etlParameters.setSql(etl.path("sql").asText(""));
+            if (etl.has("parallelism")) {
+                etlParameters.setParallelism(etl.path("parallelism").asInt(etlParameters.getParallelism()));
+            }
+        } catch (IOException e) {
+            throw new TaskException("Cannot read ETL resource: " + resource, e);
+        }
     }
 
     @Override
@@ -101,7 +255,7 @@ public class EtlTask extends AbstractTask {
                     ? DEFAULT_MAIN_CLASS
                     : etlParameters.getMainClass().trim();
             String jvmArgs = StringUtils.isBlank(etlParameters.getJvmArgs())
-                    ? DEFAULT_JVM_ARGS
+                    ? defaultJvmArgs()
                     : etlParameters.getJvmArgs().trim();
             String javaCmd = resolveJavaCmd();
 
@@ -139,6 +293,17 @@ public class EtlTask extends AbstractTask {
             throw new TaskException("run etl task error", e);
         } finally {
             cleanupPropsFile();
+        }
+    }
+
+    /** Java 8 rejects --add-opens; only add module flags on Java 9+. */
+    private String defaultJvmArgs() {
+        String version = System.getProperty("java.specification.version", "8");
+        try {
+            int major = version.startsWith("1.") ? Integer.parseInt(version.substring(2)) : Integer.parseInt(version);
+            return major >= 9 ? DEFAULT_JVM_ARGS : "";
+        } catch (NumberFormatException ignored) {
+            return "";
         }
     }
 
@@ -242,6 +407,13 @@ public class EtlTask extends AbstractTask {
      * 用当前 JVM 自己的 java（与 etl-flinksql PipelineService.resolveJavaCmd 逻辑一致）
      */
     private String resolveJavaCmd() {
+        String configuredHome = System.getenv("ETL_JAVA_HOME");
+        if (StringUtils.isNotBlank(configuredHome)) {
+            File configuredJava = new File(configuredHome.trim(), "bin/java");
+            if (configuredJava.exists() && configuredJava.canExecute()) {
+                return configuredJava.getAbsolutePath();
+            }
+        }
         String javaHome = System.getProperty("java.home");
         if (javaHome == null)
             return "java";

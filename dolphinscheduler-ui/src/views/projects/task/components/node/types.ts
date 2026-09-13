@@ -261,6 +261,11 @@ interface IRuleParameters {
 }
 
 interface ITaskParams {
+  etlResource?: string
+  etlVersion?: string
+  etlParameters?: string
+  etlContent?: string
+  datasourceIds?: number[]
   resourceList?: ISourceItem[]
   mainJar?: ISourceItem
   localParams?: ILocalParam[]

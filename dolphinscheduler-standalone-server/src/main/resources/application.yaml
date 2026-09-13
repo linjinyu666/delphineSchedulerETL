@@ -19,7 +19,7 @@ spring:
   application:
     name: standalone-server
   profiles:
-    active: h2
+    active: mysql
   jackson:
     time-zone: UTC
     date-format: "yyyy-MM-dd HH:mm:ss"
@@ -28,12 +28,12 @@ spring:
     location: classpath:standalone-banner.txt
   sql:
     init:
-      schema-locations: classpath:sql/dolphinscheduler_h2.sql
+      schema-locations: classpath:sql/dolphinscheduler_mysql.sql
   datasource:
-      driver-class-name: org.h2.Driver
-      url: jdbc:h2:mem:dolphinscheduler;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=true
-      username: sa
-      password: ""
+      driver-class-name: com.mysql.cj.jdbc.Driver
+      url: jdbc:mysql://127.0.0.1:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true
+      username: dolphinscheduler
+      password: dolphinscheduler
       hikari:
         connection-test-query: select 1
         pool-name: DolphinSchedulerDataSource
@@ -93,10 +93,10 @@ mybatis-plus:
 registry:
   type: jdbc
   hikariConfig:
-    driverClassName: org.h2.Driver
-    jdbcUrl: jdbc:h2:mem:dolphinscheduler;MODE=MySQL;DB_CLOSE_DELAY=-1;DATABASE_TO_LOWER=true
-    username: sa
-    password: ""
+    driverClassName: com.mysql.cj.jdbc.Driver
+    jdbcUrl: jdbc:mysql://127.0.0.1:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true
+    username: dolphinscheduler
+    password: dolphinscheduler
     poolName: DolphinSchedulerRegistryDataSource
 
 security:
@@ -363,5 +363,5 @@ spring:
   datasource:
     driver-class-name: com.mysql.cj.jdbc.Driver
     url: jdbc:mysql://127.0.0.1:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8
-    username: root
-    password: root@123
+    username: dolphinscheduler
+    password: dolphinscheduler
