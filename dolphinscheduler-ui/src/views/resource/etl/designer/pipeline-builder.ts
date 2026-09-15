@@ -712,8 +712,9 @@ function generateSqlFromCanvas(
           const upstreamAlias = (Array.isArray(cfg.upstreamAliases) && cfg.upstreamAliases[0])
             ? String(cfg.upstreamAliases[0]).trim()
             : 'up'
+          const fromToken = new RegExp(`\\bFROM\\s+(?:upstream|${upstreamAlias})\\b`, 'gi')
           const singleSql = userSql.replace(
-            /\bFROM\s+upstream\b/gi,
+            fromToken,
             `FROM (SELECT * FROM ${ups[0]}) AS ${upstreamAlias}`
           )
           seg = `(${singleSql})`
@@ -828,7 +829,15 @@ function generateSqlFromCanvas(
   // preview 节点：单独跑一段 SELECT (没有 sink 也可以运行)
   const previewNodes = nodes.filter((n) => n.type === 'preview')
   for (const prv of previewNodes) {
-    const incomingIds = incoming.get(prv.id) || []
+    let incomingIds = incoming.get(prv.id) || []
+    // A preview is a terminal inspection node.  During browser-created
+    // minimal jobs the canvas may render the visual arrow before the edge
+    // is persisted; with exactly one source, keep the test runnable by
+    // treating that source as the preview input.
+    if (incomingIds.length === 0) {
+      const onlySource = nodes.filter((n) => n.type === 'source')
+      if (onlySource.length === 1) incomingIds = [onlySource[0].id]
+    }
     if (incomingIds.length === 0) {
       warnings.push(`preview 节点 "${prv.label}" 无入边`)
       continue

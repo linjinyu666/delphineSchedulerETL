@@ -44,7 +44,7 @@ export function useEtl({
     etlParameters: ''
   } as INodeData)
 
-  const resourceOptions = ref<{ label: string; value: string }[]>([])
+  const resourceOptions = ref<any[]>([])
   const resourceLoading = ref(false)
   const etlContentLoading = ref(false)
   let contentRequestId = 0
@@ -89,21 +89,53 @@ export function useEtl({
       const list = Array.isArray(result)
         ? result
         : result?.totalList || result?.data?.totalList || result?.data || []
+      const getLeafName = (name: any, fullName: any) =>
+        String(name || fullName || '')
+          .replace(/\/+$/g, '')
+          .split('/')
+          .pop()
+          ?.replace(/\.json$/i, '') || ''
       const files: any[] = []
-      const flatten = (items: any[]) => {
-        items.forEach((item) => {
-          if (item.directory || item.dirctory) {
-            if (Array.isArray(item.children)) flatten(item.children)
-          } else {
-            files.push(item)
+      const collectFiles = (items: any[]) => items.forEach((item: any) => {
+        if (item.directory || item.dirctory) {
+          if (Array.isArray(item.children)) collectFiles(item.children)
+        } else {
+          files.push(item)
+        }
+      })
+      collectFiles(list)
+
+      // The resource API can return ETL files as a flat list. Rebuild the
+      // directory hierarchy from the full resource path for the tree selector.
+      const roots: any[] = []
+      const directoryMap = new Map<string, any>()
+      files.forEach((item: any) => {
+        const fullName = item.fullName || item.name || item.fileName || ''
+        const etlMarker = fullName.indexOf('/etl/')
+        const relativePath = etlMarker >= 0
+          ? fullName.substring(etlMarker + '/etl/'.length)
+          : fullName.replace(/^\/+/, '')
+        const parts = relativePath.split('/').filter(Boolean)
+        if (!parts.length) return
+        let children = roots
+        let path = etlMarker >= 0 ? fullName.substring(0, etlMarker + '/etl/'.length) : '/'
+        parts.slice(0, -1).forEach((part: string) => {
+          path += part + '/'
+          let directory = directoryMap.get(path)
+          if (!directory) {
+            directory = { key: path, label: part, disabled: true, children: [] }
+            directoryMap.set(path, directory)
+            children.push(directory)
           }
+          children = directory.children
         })
-      }
-      flatten(list)
-      resourceOptions.value = files.map((item: any) => ({
-        label: item.fullName || item.name || item.fileName,
-        value: item.fullName || item.name || item.fileName
-      }))
+        children.push({
+          key: fullName,
+          value: fullName,
+          label: getLeafName(item.name, fullName)
+        })
+      })
+      resourceOptions.value = roots
     } finally {
       resourceLoading.value = false
     }
@@ -111,15 +143,19 @@ export function useEtl({
 
   const extra: IJsonItem[] = [
     {
-      type: 'select',
+        type: 'tree-select',
       field: 'etlResource',
       name: 'ETL 作业',
       span: 24,
       options: resourceOptions,
-      props: {
-        filterable: true,
-        clearable: true,
-        loading: resourceLoading,
+        props: {
+          filterable: true,
+          clearable: true,
+          keyField: 'key',
+          labelField: 'label',
+          childrenField: 'children',
+          defaultExpandAll: true,
+          loading: resourceLoading,
         placeholder: '选择资源中心中的 ETL 作业',
         // Fetch the database-backed definition immediately when the user
         // selects a resource instead of relying only on the asynchronous

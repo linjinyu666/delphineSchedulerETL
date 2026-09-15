@@ -135,8 +135,10 @@ export default defineComponent({
             errs.push('多入边模式下,SQL 必须包含 FROM upstreams 占位符(会被替换为所有上游子查询)')
           }
         } else if (props.upstreams.length === 1) {
-          if (!/\bFROM\s+upstream\b/i.test(noComment)) {
-            errs.push('单入边模式下,SQL 必须包含 FROM upstream 占位符(会被替换为上游子查询)')
+          const upstreamAlias = cfg.value.upstreamAliases[0] || props.upstreams[0].alias
+          const fromUpstream = new RegExp(`\\bFROM\\s+(?:upstream|${upstreamAlias})\\b`, 'i')
+          if (!fromUpstream.test(noComment)) {
+            errs.push(`单入边模式下,SQL 必须包含 FROM upstream 或 FROM ${upstreamAlias}`)
           }
         }
       }
@@ -688,7 +690,7 @@ export default defineComponent({
                       value: cfg.value.sql,
                       spellcheck: false,
                       wrap: 'off',
-                      placeholder: 'SELECT a.id, a.name FROM upstream a',
+                      placeholder: 'SELECT a.id, a.name FROM upstream a（也可直接使用上游别名）',
                       onInput: onSqlInput,
                       onKeyup: onSqlKeyup,
                       onKeydown: onSqlKeydown,

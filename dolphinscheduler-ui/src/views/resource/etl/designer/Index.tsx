@@ -33,7 +33,6 @@ import {
   NTag,
   NSelect,
   NInputNumber,
-  NDivider,
   NCollapse,
   NCollapseItem,
   NModal,
@@ -87,7 +86,7 @@ function getNodeOutputFields(config: any): Array<{ name: string; type: string }>
     if (typeof item === 'string') return { name: item.trim(), type: 'STRING' }
     return {
       name: String(item?.name || item?.alias || item?.dst || item?.field || item?.fieldName || '').trim(),
-      type: String(item?.type || item?.dataType || 'STRING')
+      type: normalizeColumnType(item?.type || item?.dataType || 'STRING', item?.name || item?.field || item?.fieldName)
     }
   }).filter((field: { name: string }) => field.name)
 }
@@ -96,6 +95,14 @@ function getNodeOutputFields(config: any): Array<{ name: string; type: string }>
 // 默认态：灰色 #7A8599；选中态：蓝色 #288FFF
 const COLOR_DEFAULT = '#7A8599'
 const COLOR_HOVER = '#288FFF'
+
+// 统一数据库方言类型，去掉 MySQL 的 UNSIGNED 修饰符，使用基础整数类型。
+function normalizeColumnType(type: any, fieldName?: any): string {
+  const name = String(fieldName || '').trim().toLowerCase()
+  const value = String(type || 'STRING').trim().toUpperCase()
+  if ((name === 'id' || name === 'user_id' || name === 'userid') && value === 'STRING') return 'INT'
+  return value.replace(/\s+UNSIGNED\b/g, '') || 'STRING'
+}
 
 const NODE_ICON_SVG: Record<string, string> = {
   source: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="30" height="30"><rect x="4" y="6" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><rect x="4" y="13" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><rect x="4" y="20" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><circle cx="8" cy="8" r="1.2" fill="#fff"/><circle cx="8" cy="15" r="1.2" fill="#fff"/><circle cx="8" cy="22" r="1.2" fill="#fff"/></svg>`,
@@ -634,11 +641,11 @@ export default defineComponent({
         }
       })
 
-      // 点击画布空白处 → 打开全局属性抽屉
+      // 点击画布空白处不再打开“作业属性”抽屉；作业信息在保存弹窗中维护。
       g.on('blank:click', () => {
         activeNodeId.value = ''
         activeNodeMeta.value = undefined
-        drawerShow.value = true
+        drawerShow.value = false
       })
 
       g.on('edge:connected edge:removed node:added node:removed node:change:position', () => {
@@ -955,6 +962,8 @@ export default defineComponent({
         const requestedDir = routePrefix
           ? (routePrefix.endsWith('/') ? routePrefix : routePrefix + '/')
           : base
+        const getDirectoryLabel = (directory: string) =>
+          directory.replace(/\/+$/g, '').split('/').filter(Boolean).pop() || '根目录'
 
         // 加载目录列表（用作保存路径下拉）
         availableDirs.value = [{ label: '根目录', value: base }]
@@ -973,14 +982,14 @@ export default defineComponent({
               const fn: string = item.fullName
               const subDir = fn.endsWith('/') ? fn : fn + '/'
               availableDirs.value.push({
-                label: (item.name || '') + '/',
+                label: getDirectoryLabel(subDir) + '/',
                 value: subDir
               })
             }
           })
           // 当前作业所在目录必须始终可选，即使目录接口只返回文件。
           if (requestedDir && !availableDirs.value.some((d) => d.value === requestedDir)) {
-            availableDirs.value.push({ label: requestedDir.replace(base, '') || '当前目录', value: requestedDir })
+            availableDirs.value.push({ label: getDirectoryLabel(requestedDir) + '/', value: requestedDir })
           }
         } catch (e) {
           // ignore
@@ -1078,7 +1087,9 @@ export default defineComponent({
         const ud = u?.getData() || {}
         const ucfg = ud.config || {}
         // 所有上游节点都从统一输出契约读取字段；transform 输出来自 outputs。
-        const fields: Array<{ name: string; type: string }> = getNodeOutputFields(ucfg)
+        const fields: Array<{ name: string; type: string }> = ud.type === 'join'
+          ? getJoinOutputFields(u as Node, ucfg)
+          : getNodeOutputFields(ucfg)
         const alias = ucfg.alias || ('t_' + (uid || '').replace(/[^a-zA-Z0-9]/g, ''))
         return {
           id: uid,
@@ -1100,7 +1111,10 @@ export default defineComponent({
       const node = graph.value.getCellById(joinDialogNode.value.id)
       if (!node) return
       const data = node.getData() || {}
-      data.config = newConfig
+      // JOIN 的输出来自 selectFields，必须显式落到 fields/columns，
+      // 否则下游自定义 SQL 只能看到 JOIN 节点本身，拿不到其输出字段。
+      const joinFields = getJoinOutputFields(node, newConfig)
+      data.config = { ...newConfig, fields: joinFields, columns: joinFields }
       // 别名 → 同步到 label
       const alias = (newConfig.alias || '').trim()
       const def = NODE_DEFINITIONS.find((d) => d.type === data.type)
@@ -1113,6 +1127,45 @@ export default defineComponent({
       node.setAttrByPath('label/text', data.label)
       // 触发画布保存
       try { graph.value.toJSON() } catch {}
+    }
+
+    function getJoinOutputFields(joinNode: Node, config: any): Array<{ name: string; type: string }> {
+      const raw = String(config?.selectFields || '').trim()
+      if (!raw || !graph.value) {
+        const persisted = Array.isArray(config?.fields)
+          ? config.fields
+          : Array.isArray(config?.columns)
+            ? config.columns
+            : Array.isArray(config?.outputFields)
+              ? config.outputFields
+              : []
+        return persisted.map((item: any) => ({
+          name: String(item?.name || item?.alias || item?.dst || item?.target || item?.field || '').trim(),
+          type: String(item?.type || item?.dataType || 'STRING').trim() || 'STRING'
+        })).filter((field: { name: string }) => field.name)
+      }
+      const upstreamNodes = graph.value.getEdges()
+        .filter((edge: Edge) => edge.getTargetCellId() === joinNode.id)
+        .map((edge: Edge) => graph.value?.getCellById(edge.getSourceCellId()) as Node | null)
+        .filter(Boolean) as Node[]
+      const upstreamFields = upstreamNodes.flatMap((upstream) => {
+        const data = upstream.getData() || {}
+        const cfg = data.config || {}
+        const alias = String(cfg.alias || data.label || '').trim()
+        return getNodeOutputFields(cfg).map((field) => ({ ...field, alias }))
+      })
+      return raw.split(',').map((item: string) => {
+        const parts = item.trim().split(/\s+AS\s+/i)
+        const source = parts[0].trim()
+        const segments = source.split('.').map((v) => v.trim()).filter(Boolean)
+        const name = String((parts[1] || segments[segments.length - 1] || '').trim())
+        const sourceAlias = segments.length > 1 ? segments[segments.length - 2] : ''
+        const sourceName = segments[segments.length - 1] || ''
+        const matched = upstreamFields.find((field) =>
+          field.alias === sourceAlias && field.name === sourceName
+        ) || upstreamFields.find((field) => field.name === sourceName)
+        return { name, type: matched?.type || 'STRING' }
+      }).filter((field) => field.name)
     }
 
     // ===== TRANSFORM 节点对话框 =====
@@ -1183,7 +1236,9 @@ export default defineComponent({
         const u = allNodes.find((x: Node) => x.id === uid)
         const ud = u?.getData() || {}
         const ucfg = ud.config || {}
-        const fields: Array<{ name: string; type: string }> = getNodeOutputFields(ucfg)
+        const fields: Array<{ name: string; type: string }> = ud.type === 'join'
+          ? getJoinOutputFields(u as Node, ucfg)
+          : getNodeOutputFields(ucfg)
         const alias = ucfg.alias || ('t_' + (uid || '').replace(/[^a-zA-Z0-9]/g, ''))
         return {
           id: uid,
@@ -1239,7 +1294,9 @@ export default defineComponent({
         const u = allNodes.find((x: Node) => x.id === uid)
         const ud = u?.getData() || {}
         const ucfg = ud.config || {}
-        const fields: Array<{ name: string; type: string }> = getNodeOutputFields(ucfg)
+        const fields: Array<{ name: string; type: string }> = ud.type === 'join'
+          ? getJoinOutputFields(u as Node, ucfg)
+          : getNodeOutputFields(ucfg)
         const alias = ucfg.alias || ('t_' + (uid || '').replace(/[^a-zA-Z0-9]/g, ''))
         return {
           id: uid,
@@ -1291,7 +1348,9 @@ export default defineComponent({
         const u = allNodes.find((x: Node) => x.id === uid)
         const ud = u?.getData() || {}
         const ucfg = ud.config || {}
-        const fields: Array<{ name: string; type: string }> = getNodeOutputFields(ucfg)
+        const fields: Array<{ name: string; type: string }> = ud.type === 'join'
+          ? getJoinOutputFields(u as Node, ucfg)
+          : getNodeOutputFields(ucfg)
         const alias = ucfg.alias || ('t_' + (uid || '').replace(/[^a-zA-Z0-9]/g, ''))
         return {
           id: uid,
@@ -2518,28 +2577,8 @@ export default defineComponent({
 
         {/* 节点配置抽屉：分组展示基础信息、节点配置和底部操作 */}
         <NDrawer v-model:show={drawerShow.value} width={620} placement='right' resizable={true} style='max-width: 92vw;'>
-          <NDrawerContent title={activeNodeMeta.value?.label || '作业属性'}>
-            {!activeNodeMeta.value ? (
-              <NForm labelPlacement='top'>
-                <NFormItem label='作业名' required>
-                  <NInput v-model:value={jobName.value} placeholder='order-sync' />
-                </NFormItem>
-                <NFormItem label='备注'>
-                  <NInput v-model:value={description.value} placeholder='作业描述' />
-                </NFormItem>
-                <NFormItem label='保存路径' required>
-                  <NSelect
-                    v-model:value={saveDir.value}
-                    options={availableDirs.value}
-                    placeholder='请选择保存路径'
-                  />
-                </NFormItem>
-                <NDivider />
-                <NSpace justify='end' style='width: 100%;'>
-                  <NButton onClick={() => (drawerShow.value = false)}>关闭</NButton>
-                </NSpace>
-              </NForm>
-            ) : (
+          <NDrawerContent title={activeNodeMeta.value?.label || '节点属性'}>
+            {activeNodeMeta.value ? (
               <NForm labelPlacement='top' class='etl-node-config-form'>
                 <section class='etl-node-config-section etl-node-config-overview'>
                   <div class='etl-node-config-section-heading'>
@@ -2736,7 +2775,7 @@ export default defineComponent({
                   </NSpace>
                 </div>
               </NForm>
-            )}
+            ) : null}
           </NDrawerContent>
         </NDrawer>
       </div>

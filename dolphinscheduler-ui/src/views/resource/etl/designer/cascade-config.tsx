@@ -37,6 +37,11 @@ interface Option {
   value: string | number
 }
 
+function normalizeColumnType(type: any): string {
+  const value = String(type || 'STRING').trim().toUpperCase()
+  return value.replace(/\s+UNSIGNED\b/g, '') || 'STRING'
+}
+
 export default defineComponent({
   name: 'CascadeConfig',
   props: {
@@ -93,7 +98,7 @@ export default defineComponent({
     }
 
     const DATASOURCE_TYPES = [
-      'MYSQL', 'POSTGRESQL', 'HIVE', 'CLICKHOUSE', 'ORACLE',
+      'MYSQL', 'POSTGRESQL', 'HIVE', 'CLICKHOUSE', 'ORACLE', 'DAMENG',
       'SQLSERVER', 'DB2', 'PRESTO', 'REDSHIFT', 'ATHENA',
       'TRINO', 'STARROCKS', 'AZURESQL', 'DAMENG', 'OCEANBASE',
       'KYUUBI', 'DATABEND', 'VERTICA', 'HANA', 'DORIS', 'DOLPHINDB'
@@ -111,11 +116,14 @@ export default defineComponent({
           const opt = columnOptions.value.find((c: any) => c.value === col)
           return {
             name: col,
-            type: (opt && opt._type) || 'STRING',
+            type: normalizeColumnType((opt as any)?._type || 'STRING'),
             primary: !!(opt && opt._primary)
           }
         }
-        return col
+        return {
+          ...col,
+          type: normalizeColumnType(col.type || col.dataType || 'STRING')
+        }
       })
       emit('update:modelValue', {
         dsType: dsType.value,
@@ -205,7 +213,7 @@ export default defineComponent({
             label,
             value,
             _name: parsed.name,
-            _type: parsed.size ? `${parsed.type}(${parsed.size})` : parsed.type,
+            _type: normalizeColumnType(parsed.size ? `${parsed.type}(${parsed.size})` : parsed.type),
             _primary: parsed.primary,
             _nullable: parsed.nullable,
             _comment: parsed.comment
@@ -234,11 +242,12 @@ export default defineComponent({
         brackets.push(inner)
         return ''
       }).trim()
-      // 现在 stripped 是 "name TYPE(size)" 或 "name TYPE(p,s)" 或 "name TYPE"
-      const headMatch = stripped.match(/^(\S+)\s+(\S+)$/)
+      // 现在 stripped 是 "name TYPE(size)"、"name TYPE(p,s)" 或
+      // MySQL 驱动常见的 "name INT UNSIGNED"。
+      const headMatch = stripped.match(/^(\S+)\s+(.+)$/)
       if (headMatch) {
         result.name = headMatch[1]
-        const typePart = headMatch[2]
+        const typePart = headMatch[2].trim().replace(/\s+UNSIGNED\b/ig, '')
         // 兼容 (size) 与 (p,s) 两种精度写法
         const tm = typePart.match(/^([A-Za-z][A-Za-z0-9_]*)(?:\((\d+)(?:,(\d+))?\))?$/)
         if (tm) {

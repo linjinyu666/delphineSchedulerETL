@@ -207,6 +207,11 @@ export default defineComponent({
       ? '新建 ETL 作业'
       : t('resource.file.create_file')
     const uploadBtnLabel = isEtl ? '上传 ETL 文件' : t('resource.file.upload_files')
+    const breadcrumbItems = isEtl
+      ? this.breadListRef?.length
+        ? [{ item: this.breadListRef[this.breadListRef.length - 1], index: this.breadListRef.length - 1 }]
+        : []
+      : this.breadListRef?.map((item, index) => ({ item, index })) ?? []
 
     return (
       <NSpace vertical>
@@ -247,7 +252,7 @@ export default defineComponent({
           {{
             header: () => (
               <NBreadcrumb separator='>'>
-                {this.breadListRef?.map((item, index) => (
+                {breadcrumbItems.map(({ item, index }) => (
                   <NBreadcrumbItem>
                     <NButton
                       text

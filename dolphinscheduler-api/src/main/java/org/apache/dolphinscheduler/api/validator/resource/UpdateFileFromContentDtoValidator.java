@@ -38,10 +38,20 @@ public class UpdateFileFromContentDtoValidator extends AbstractResourceValidator
         String fileContent = updateFileFromContentDto.getFileContent();
 
         exceptionResourceAbsolutePathInvalidated(fileAbsolutePath);
+        // ETL 内容完全存储在数据库中，不要求对象存储中存在同名物理文件。
+        // 更新接口本身使用数据库 upsert，因此不能按普通资源执行存在性校验。
+        if (isDatabaseBackedEtl(fileAbsolutePath)) {
+            exceptionFileContentInvalidated(fileContent);
+            return;
+        }
         exceptionResourceNotExists(fileAbsolutePath);
         exceptionResourceIsNotFile(fileAbsolutePath);
         exceptionUserNoResourcePermission(loginUser, fileAbsolutePath);
         exceptionFileContentCannotFetch(fileAbsolutePath);
         exceptionFileContentInvalidated(fileContent);
+    }
+
+    private boolean isDatabaseBackedEtl(String path) {
+        return path != null && (path.contains("/etl/") || path.endsWith("/etl"));
     }
 }

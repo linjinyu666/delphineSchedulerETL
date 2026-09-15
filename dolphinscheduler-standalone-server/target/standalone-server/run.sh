@@ -31,14 +31,18 @@ done
 for jar in "$M2"/org/springframework/security/spring-security-{config,core,crypto,web}/5.7.11/*.jar; do
   [ -f "$jar" ] && CP_PARTS+=("$jar")
 done
+# Spring ORM is needed by the 3.4.2 auto-configuration and must match Spring 5.
+[ -f "$M2/org/springframework/spring-orm/5.3.13/spring-orm-5.3.13.jar" ] && CP_PARTS+=("$M2/org/springframework/spring-orm/5.3.13/spring-orm-5.3.13.jar")
 
 # All standalone-server provided modules (master, worker, api, alert-server, plus every plugin bundle).
 # Adding ALL dolphinscheduler-*.jar ensures any missing transitive api/spi module is picked up.
 for jar in "$M2"/org/apache/dolphinscheduler/*/3.4.2/*-3.4.2.jar; do
   # 排除几个 shade 了 slf4j-log4j12 引起 SLF4JLoggerContext 类冲突的 jar
   case "$jar" in
+    */dolphinscheduler-task-etl/*|\
     */dolphinscheduler-datasource-dolphindb/*|\
-    */dolphinscheduler-task-aliyunserverlessspark/*)
+    */dolphinscheduler-task-aliyunserverlessspark/*|\
+    */dolphinscheduler-task-grpc/*)
       continue ;;
   esac
   CP_PARTS+=("$jar")
@@ -51,6 +55,7 @@ mkdir -p "$SHADE_CACHE"
 for jar in "$M2"/org/apache/dolphinscheduler/*/3.4.2/*-3.4.2-shade.jar; do
   # 同上, 排除 shade jar 里的 slf4j-log4j12 冲突 + hive shade 包含 servlet 3.x 污染 classpath
   case "$jar" in
+    */dolphinscheduler-task-etl/*|\
     */dolphinscheduler-datasource-dolphindb/*|\
     */dolphinscheduler-task-aliyunserverlessspark/*)
       continue ;;
@@ -102,6 +107,12 @@ elif [ "$MODULE_CP_FOUND" = false ]; then
       ! -name '*-tests.jar' \
       ! -name '*-test-fixtures.jar' | while read jar; do
       case "$jar" in
+        # DolphinScheduler 3.4.2 uses Spring Boot 2.6.1 / Spring Framework 5.3.13.
+        # Do not let unrelated versions from the developer Maven cache override them.
+        */org/springframework/boot/*/2.5.*|*/org/springframework/boot/*/2.7.*|*/org/springframework/boot/*/3.*) continue;;
+        */org/springframework/spring-*/5.3.*)
+          case "$jar" in */spring-*/5.3.13/*) ;; *) continue;; esac;;
+        */org/springframework/spring-*/*) continue;;
         # 排除高版本 spring-boot 3.x (class file 61+, 不兼容 JDK 8)
         */spring-boot/3.*|*/spring-boot-*/3.*) continue;;
         # 排除 spring 6.x (class file 61+)
@@ -132,8 +143,12 @@ CP=$(printf '%s:' "${CP_PARTS[@]}")
 # Remove conflicting slf4j bindings — keep only logback.
 # Keep exactly the Logback version used by the 3.4.2 Spring Boot baseline;
 # the Maven cache also contains incompatible 1.1.x/1.2.x/1.4.x/1.5.x variants.
-CP=$(echo "$CP" | tr ':' '\n' | awk '!/\/logback-(classic|core)\// || /\/logback-(classic|core)\/1\.2\.11\//' | awk '!/\/org\/springframework\/security\// || /\/spring-security-(config|core|crypto|web)\/5\.7\.11\//' | grep -v -E '/slf4j-simple/|/slf4j-reload4j/|/slf4j-jdk14/|/slf4j-nop/|/slf4j-log4j12/|/log4j-slf4j-impl/|/log4j-over-slf4j/|/org/springframework/cloud/|/org/dinky/|dolphinscheduler-task-aliyunserverlessspark|dolphinscheduler-datasource-dolphindb' | paste -sd ':' -)
+CP=$(echo "$CP" | tr ':' '\n' | awk '!/\/logback-(classic|core)\// || /\/logback-(classic|core)\/1\.2\.11\//' | awk '!/\/org\/springframework\/security\// || /\/spring-security-(config|core|crypto|web)\/5\.7\.11\//' | grep -v -E '/slf4j-simple/|/slf4j-reload4j/|/slf4j-jdk14/|/slf4j-nop/|/slf4j-log4j12/|/log4j-slf4j-impl/|/log4j-over-slf4j/|/org/springframework/cloud/|/org/dinky/|dolphinscheduler-task-aliyunserverlessspark|dolphinscheduler-datasource-dolphindb|dolphinscheduler-task-grpc' | paste -sd ':' -)
 CP="classes:conf:${CP}"
+# ETL programs are compiled for Java 11+, while this standalone build itself
+# runs on Java 8. Keep the service JVM unchanged and use ETL_JAVA_HOME for the
+# child process when configured by the local environment.
+export ETL_JAVA_HOME="${ETL_JAVA_HOME:-/Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-22.0.2/Contents/Home}"
 
 exec /Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-1.8.0_482/Contents/Home/bin/java \
   -Xms512m -Xmx2g \
