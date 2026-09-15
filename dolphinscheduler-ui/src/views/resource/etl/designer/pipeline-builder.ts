@@ -445,7 +445,7 @@ function generateSqlFromCanvas(
         //   - joinKeys:[{srcCol, tgtCol}] 自由配对(支持异名字段 a.id=b.user_id)
         //   - columns:[{name, srcField, tgtField, alias, enabled, compare}] 用户自定输出列
         //   - output:{added, deleted, changed, unchanged} 决定输出哪些差异行
-        const ups = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
+        let ups = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
         if (ups.length < 2) {
           warnings.push(`compare 节点 "${n.label}" 入边少于 2（实际 ${ups.length}）`)
           seg = ups[0] || ''
@@ -591,7 +591,22 @@ function generateSqlFromCanvas(
         if (output.changed !== false) opFilters.push(sqlString(outputSymbols.changed))
         if (output.unchanged === true) opFilters.push(sqlString(outputSymbols.unchanged))
 
-        const inner = `SELECT\n  CASE\n    ${caseExpr}\n  END AS cmp_op,\n  ${keySelect},\n  ${colsSelect}\nFROM ${srcAlias} FULL OUTER JOIN ${tgtAlias}\n  ON ${onExpr}`
+        // Join/SQL 等中间节点返回的是带括号的子查询，不能直接把节点别名当成
+        // Flink 表名使用；这里显式包成“子查询 AS 别名”，保证比对节点可以消费
+        // 上游 Join 和自定义 SQL 的实际结果。
+        const srcSegment = (ups[srcIndex] || '').trim()
+        let tgtSegment = (ups[tgtIndex] || '').trim()
+        // 兼容历史 SQL 节点未展开 upstream 占位符的作业：
+        // 比对节点已经拿到了 Join 结果时，将该占位符绑定到同一份 Join 子查询。
+        if (/\bFROM\s+upstream\b/i.test(tgtSegment) && srcSegment) {
+          tgtSegment = tgtSegment.replace(
+            /\bFROM\s+upstream\b/gi,
+            `FROM (SELECT * FROM ${srcSegment}) AS upstream`
+          )
+        }
+        const srcFrom = srcSegment.startsWith('(') ? `${srcSegment} AS ${srcAlias}` : srcSegment
+        const tgtFrom = tgtSegment.startsWith('(') ? `${tgtSegment} AS ${tgtAlias}` : tgtSegment
+        const inner = `SELECT\n  CASE\n    ${caseExpr}\n  END AS cmp_op,\n  ${keySelect},\n  ${colsSelect}\nFROM ${srcFrom} FULL OUTER JOIN ${tgtFrom}\n  ON ${onExpr}`
         const compareAlias = (cfg.alias || 'compare_out').trim().replace(/[^a-zA-Z0-9_]/g, '_')
         const outerWhere = opFilters.length > 0
           ? `WHERE ${compareAlias}.cmp_op IN (${opFilters.join(', ')})`
@@ -686,7 +701,7 @@ function generateSqlFromCanvas(
         //   - 单入边:SQL 里 FROM upstream   → 替换为 (子查询) AS up
         //   - 多入边:SQL 里 FROM upstreams  → 替换为 (子查询1) AS u1, (子查询2) AS u2 ...
         //   - outputs 字段(用户显式声明)→ 写回 n.config.fields,给下游节点引用 + 字段补全
-        const ups = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
+        let ups = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
         const userSql = (cfg.sql || '').trim()
         // 把 outputs 写到节点 fields (供下游 + 自动补全)
         const outputs = Array.isArray(cfg.outputs) ? cfg.outputs : []
@@ -702,6 +717,16 @@ function generateSqlFromCanvas(
           break
         }
         if (ups.length === 0) {
+          // 兼容旧作业保存时只保留了画布连线、未把 SQL 入边写入请求的情况。
+          // 当 SQL 使用标准 upstream 占位符且画布只有一个 Join 上游时，
+          // 直接从 Join 节点推导输入，避免把 upstream 当成不存在的 Flink 表。
+          const joinCandidates = nodes.filter((item) => item.type === 'join')
+          if (/\bFROM\s+upstream\b/i.test(userSql) && joinCandidates.length === 1) {
+            const inferred = visit(joinCandidates[0].id)
+            if (inferred) ups = [inferred]
+          }
+        }
+        if (ups.length === 0) {
           seg = `(${userSql})`
           break
         }
@@ -712,11 +737,13 @@ function generateSqlFromCanvas(
           const upstreamAlias = (Array.isArray(cfg.upstreamAliases) && cfg.upstreamAliases[0])
             ? String(cfg.upstreamAliases[0]).trim()
             : 'up'
-          const fromToken = new RegExp(`\\bFROM\\s+(?:upstream|${upstreamAlias})\\b`, 'gi')
-          const singleSql = userSql.replace(
-            fromToken,
-            `FROM (SELECT * FROM ${ups[0]}) AS ${upstreamAlias}`
-          )
+          const replacement = `FROM (SELECT * FROM ${ups[0]}) AS ${upstreamAlias}`
+          // 先处理标准占位符，再兼容用户直接填写上游别名的写法；
+          // 不依赖动态 RegExp，避免别名中的特殊字符导致占位符未被替换。
+          let singleSql = userSql.replace(/\bFROM\s+upstream\b/gi, replacement)
+          if (singleSql === userSql) {
+            singleSql = userSql.replace(new RegExp(`FROM\\s+${upstreamAlias}\\b`, 'i'), replacement)
+          }
           seg = `(${singleSql})`
           break
         }
