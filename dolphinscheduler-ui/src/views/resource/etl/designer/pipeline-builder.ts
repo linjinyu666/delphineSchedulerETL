@@ -349,9 +349,37 @@ function generateSqlFromCanvas(
   // 多分支：用 UNION ALL 合并到 sink
   const visited = new Set<string>()
   const visiting = new Set<string>()
+  // 中间节点不再全部嵌套进最终查询，而是在同一个 TableEnvironment 中
+  // 按依赖顺序注册成临时视图。这样 join / sql / compare 等每个组件都有
+  // 独立的执行阶段，最终查询只需要引用最后一个节点。
+  const stageStatements: string[] = []
+
+  const nodeAlias = (node: CanvasNode | undefined): string =>
+    String(node?.config?.alias || node?.label || (node ? sanitizeAlias(node.id) : 'stage'))
+      .trim()
+      .replace(/[^a-zA-Z0-9_]/g, '_') || 'stage'
+
+  const stageNode = (node: CanvasNode, segment: string): string => {
+    const alias = nodeAlias(node)
+    let statement = segment.trim()
+    if (statement.startsWith('__CMP__:')) {
+      const rest = statement.substring('__CMP__:'.length)
+      const colonIdx = rest.indexOf(':')
+      statement = colonIdx > 0 ? rest.substring(colonIdx + 1).trim() : ''
+    }
+    // 旧生成逻辑用括号包裹中间查询；CREATE VIEW AS 后直接放 SELECT。
+    if (statement.startsWith('(') && statement.endsWith(')')) {
+      statement = statement.substring(1, statement.length - 1).trim()
+    }
+    if (!statement) return ''
+    // 不在语句前写行注释：properties 写入时会压缩换行，行注释会把后面的
+    // CREATE 一并注释掉。节点别名已经写入 DDL，执行器会按语句打印阶段。
+    stageStatements.push(`CREATE TEMPORARY VIEW ${alias} AS\n${statement}`)
+    return alias
+  }
 
   const visit = (nid: string): string => {
-    if (visited.has(nid)) return ''
+    if (visited.has(nid)) return nodeAlias(nodes.find((x) => x.id === nid))
     if (visiting.has(nid)) {
       warnings.push(`检测到环，节点 ${nid} 重复访问，已跳过`)
       return ''
@@ -747,13 +775,32 @@ function generateSqlFromCanvas(
           seg = `(${singleSql})`
           break
         }
-        // 多入边:FROM upstreams 替换为 (SELECT * FROM ups[0]) AS u1 LEFT JOIN (SELECT * FROM ups[1]) AS u2 ON 1=1 ...
-        //   Flink SQL 限制: FROM 后接 (alias) 不合法, 必须 (SELECT ... FROM alias) 子查询
-        //   所以每个入边都包成 (SELECT * FROM ups[i]) 再套 LEFT JOIN ... ON 1=1
-        //   (用户可以在 SQL 里用 a.id / b.lvl 引用, 因为是 LEFT JOIN 链)
+        // 多入边支持显式 JOIN:
+        //   FROM source1 a LEFT JOIN source2 b ON a.id = b.id
+        // 只替换 FROM/JOIN 后面的上游表名，保留用户写的 LEFT/RIGHT/INNER/FULL JOIN 以及 ON 条件。
+        // 这样 JOIN 语义由作业 SQL 决定，而不是由执行器默认成 LEFT JOIN。
         const uNames: string[] = (Array.isArray(cfg.upstreamAliases) && cfg.upstreamAliases.length === ups.length)
           ? cfg.upstreamAliases.map((s: any) => String(s || '').trim()).filter(Boolean)
           : ups.map((_, i) => `u${i + 1}`)
+
+        const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+        const replaceExplicitSources = (sql: string) => {
+          let result = sql
+          uNames.forEach((name, index) => {
+            if (!name || !ups[index]) return
+            const pattern = new RegExp(`\\b(FROM|JOIN)\\s+${escapeRegExp(name)}\\b`, 'gi')
+            result = result.replace(pattern, (_match, keyword) => `${keyword} (SELECT * FROM ${ups[index]})`)
+          })
+          return result
+        }
+
+        if (!/\bFROM\s+upstreams\b/i.test(userSql)) {
+          // 显式 JOIN 模式: source1/source2 仅作为输入标识，别名和 JOIN 类型仍由用户 SQL 保留。
+          seg = `(${replaceExplicitSources(userSql)})`
+          break
+        }
+
+        // 兼容旧写法: FROM upstreams 仍按默认 LEFT JOIN 链展开。
         if (ups.length === 2) {
           const fromList = `(SELECT * FROM ${ups[0]}) AS ${uNames[0] || 'u1'} LEFT JOIN (SELECT * FROM ${ups[1]}) AS ${uNames[1] || 'u2'} ON 1=1`
           const multiSql = userSql.replace(/\bFROM\s+upstreams\b/gi, `FROM ${fromList}`)
@@ -787,6 +834,11 @@ function generateSqlFromCanvas(
       }
       default:
         seg = `/* unknown type: ${n.type} */`
+    }
+    // source 是外部 JDBC 表，不需要重复注册；sink / preview 是终端节点。
+    // 其余组件在这里落成独立临时视图，并把自己的别名交给下游。
+    if (seg && !['source', 'sink', 'preview'].includes(n.type)) {
+      seg = stageNode(n, seg)
     }
     visited.add(nid)
     visiting.delete(nid)
@@ -901,11 +953,11 @@ function generateSqlFromCanvas(
     fragments.push(upSelects.join(' UNION ALL '))
   }
 
-  if (fragments.length === 0) {
+  if (fragments.length === 0 && stageStatements.length === 0) {
     return '-- 画布上没有 sink / preview 节点，或所有 sink 都无入边'
   }
 
-  return fragments.join(';\n')
+  return [...stageStatements, ...fragments].join(';\n')
 }
 
 function tryParseColumns(raw: any): any[] | null {

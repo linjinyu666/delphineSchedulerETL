@@ -18,7 +18,12 @@
 import { useI18n } from 'vue-i18n'
 import { IEmit } from '../types'
 import { useFileStore } from '@/store/file/file'
-import { createResource, updateResource } from '@/service/modules/resources'
+import {
+  createResource,
+  updateResource,
+  onlineCreateResource,
+  updateResourceContent
+} from '@/service/modules/resources'
 
 export function useUpload(state: any) {
   const { t } = useI18n()
@@ -34,6 +39,38 @@ export function useUpload(state: any) {
     if (state.saving) return
     state.saving = true
     try {
+      // ETL 作业只保存 JSON 内容到 t_ds_etl_content，不再通过通用文件上传链路。
+      if (state.uploadForm.type === 'ETL') {
+        const content = await state.uploadForm.file.text()
+        if (state.uploadForm.isReupload) {
+          await updateResourceContent({
+            fullName: state.uploadForm.fullName,
+            tenantCode: state.uploadForm.user_name,
+            content
+          })
+        } else {
+          const fileName = String(state.uploadForm.name || 'etl.json')
+          const dot = fileName.lastIndexOf('.')
+          const baseName = dot > 0 ? fileName.substring(0, dot) : fileName
+          const suffix = dot > 0 ? fileName.substring(dot + 1) : 'json'
+          const currentDir = fileStore.getCurrentDir || '/'
+          await onlineCreateResource({
+            pid: -1,
+            type: 'ETL',
+            fileName: baseName,
+            suffix,
+            description: state.uploadForm.description,
+            content,
+            currentDir
+          })
+        }
+        window.$message.success(t('resource.file.success'))
+        state.saving = false
+        emit('updateList')
+        hideModal()
+        resetForm()
+        return
+      }
       const formData = new FormData()
       formData.append('file', state.uploadForm.file)
       formData.append('type', state.uploadForm.type)

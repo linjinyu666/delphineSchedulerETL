@@ -152,7 +152,6 @@ export ETL_JAVA_HOME="${ETL_JAVA_HOME:-/Users/linjinyu/Library/Java/JavaVirtualM
 
 exec /Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-1.8.0_482/Contents/Home/bin/java \
   -Xms512m -Xmx2g \
-  -verbose:class \
   -Djava.security.properties=$PWD/conf/java.security.override \
   -DDS_LOG_DIR="$PWD/logs" \
   -Dlogging.config="file:$PWD/conf/logback-spring.xml" \

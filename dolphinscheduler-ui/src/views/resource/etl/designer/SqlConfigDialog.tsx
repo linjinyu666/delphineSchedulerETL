@@ -17,7 +17,7 @@
 
 import { defineComponent, ref, computed, watch, h, nextTick } from 'vue'
 import {
-  NDrawer, NDrawerContent, NButton, NSpace, NInput, NSelect, NPopconfirm,
+  NDrawer, NDrawerContent, NButton, NSpace, NInput, NSelect,
   NEmpty, NAlert, NTag, NTooltip
 } from 'naive-ui'
 
@@ -129,10 +129,23 @@ export default defineComponent({
         if (!/\bFROM\b/i.test(noComment)) {
           errs.push('SQL 必须包含 FROM 子句')
         }
-        // 多入边模式:要求 SQL 里有 FROM upstreams 标记 (builder 替换占位符)
+        // 多入边模式支持两种写法:
+        // 1) FROM upstreams: 由 builder 按兼容规则生成 LEFT JOIN 链
+        // 2) 显式 FROM source1 a LEFT/RIGHT/INNER JOIN source2 b ON ...:
+        //    JOIN 类型和 ON 条件完全以用户 SQL 为准
         if (props.upstreams.length > 1) {
-          if (!/\bFROM\s+upstreams\b/i.test(noComment)) {
-            errs.push('多入边模式下,SQL 必须包含 FROM upstreams 占位符(会被替换为所有上游子查询)')
+          const hasPlaceholder = /\bFROM\s+upstreams\b/i.test(noComment)
+          const hasJoin = /\b(?:INNER|LEFT|RIGHT|FULL|CROSS)?\s*JOIN\b/i.test(noComment)
+          const aliases = cfg.value.upstreamAliases || []
+          const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+          const hasAllExplicitSources = aliases.length === props.upstreams.length
+            && aliases.every((alias) => {
+              const name = String(alias || '').trim()
+              return name.length > 0
+                && new RegExp(`\\b(?:FROM|JOIN)\\s+${escapeRegExp(name)}\\b`, 'i').test(noComment)
+            })
+          if (!hasPlaceholder && !(hasJoin && hasAllExplicitSources)) {
+            errs.push('多入边模式下可使用 FROM upstreams，或显式写 FROM source1 a LEFT/RIGHT/INNER JOIN source2 b ON ...')
           }
         } else if (props.upstreams.length === 1) {
           const upstreamAlias = cfg.value.upstreamAliases[0] || props.upstreams[0].alias
@@ -322,6 +335,82 @@ export default defineComponent({
       showAutocomplete.value = false
     }
 
+    // 轻量 SQL 美化：只调整空白、缩进和常见子句换行，不改写字符串、注释或 SQL 语义。
+    const beautifySql = () => {
+      const raw = (cfg.value.sql || '').trim()
+      if (!raw) return
+      let result = ''
+      let quote = ''
+      let depth = 0
+      let lineStart = true
+      const append = (value: string) => {
+        result += value
+        lineStart = value.endsWith('\n')
+      }
+      const ensureNewline = () => {
+        result = result.replace(/[ \t]+$/g, '')
+        if (result && !result.endsWith('\n')) result += '\n'
+        lineStart = true
+      }
+      for (let i = 0; i < raw.length; i++) {
+        const ch = raw[i]
+        const next = raw[i + 1] || ''
+        if (quote) {
+          append(ch)
+          if (ch === quote && raw[i - 1] !== '\\') quote = ''
+          continue
+        }
+        if (ch === "'" || ch === '"' || ch === '`') {
+          quote = ch
+          append(ch)
+          continue
+        }
+        if (ch === '-' && next === '-') {
+          const end = raw.indexOf('\n', i)
+          const comment = end < 0 ? raw.substring(i) : raw.substring(i, end)
+          if (!lineStart) ensureNewline()
+          append(`${comment.trim()}\n`)
+          i = end < 0 ? raw.length : end
+          continue
+        }
+        if (ch === '/' && next === '*') {
+          const end = raw.indexOf('*/', i + 2)
+          const comment = end < 0 ? raw.substring(i) : raw.substring(i, end + 2)
+          if (!lineStart) ensureNewline()
+          append(`${comment.trim()}\n`)
+          i = end < 0 ? raw.length : end + 1
+          continue
+        }
+        if (ch === '(') depth++
+        if (ch === ')') depth = Math.max(0, depth - 1)
+        if (/\s/.test(ch)) {
+          if (result && !/[\s(]$/.test(result)) result += ' '
+          continue
+        }
+        // 顶层 SELECT 列表按逗号换行；函数参数中的逗号保持原样。
+        if (ch === ',' && depth === 0) {
+          result = result.replace(/[ \t]+$/g, '')
+          append(',\n')
+          append('  ')
+          continue
+        }
+        append(ch)
+      }
+      let formatted = result.replace(/[ \t]+\n/g, '\n').trim()
+      formatted = formatted.replace(/\s+(FROM|WHERE|GROUP\s+BY|ORDER\s+BY|HAVING|LIMIT|UNION(?:\s+ALL)?|LEFT\s+JOIN|RIGHT\s+JOIN|FULL\s+JOIN|INNER\s+JOIN|CROSS\s+JOIN)\b/gi, '\n$1')
+      formatted = formatted.replace(/\s+(AND|OR)\s+/gi, '\n  $1 ')
+      formatted = formatted.replace(/\n{2,}/g, '\n')
+      cfg.value.sql = formatted
+      nextTick(() => {
+        const ta = taRef.value as HTMLTextAreaElement | null
+        if (ta) {
+          ta.focus()
+          ta.selectionStart = ta.selectionEnd = ta.value.length
+          calcCursor(ta)
+        }
+      })
+    }
+
     const onSqlKeyup = (e: KeyboardEvent) => {
       const ta = e.target as HTMLTextAreaElement
       calcCursor(ta)
@@ -509,22 +598,6 @@ export default defineComponent({
     const addOutput = () => {
       cfg.value.outputs.push({ name: '', expr: '', type: 'STRING' })
     }
-    const removeOutput = (idx: number) => {
-      cfg.value.outputs.splice(idx, 1)
-    }
-    const upOutput = (idx: number) => {
-      if (idx === 0) return
-      const t = cfg.value.outputs[idx - 1]
-      cfg.value.outputs[idx - 1] = cfg.value.outputs[idx]
-      cfg.value.outputs[idx] = t
-    }
-    const downOutput = (idx: number) => {
-      if (idx >= cfg.value.outputs.length - 1) return
-      const t = cfg.value.outputs[idx + 1]
-      cfg.value.outputs[idx + 1] = cfg.value.outputs[idx]
-      cfg.value.outputs[idx] = t
-    }
-
     // 一键从 SQL 解析 outputs
     const parseFromSql = () => {
       showAutocomplete.value = false
@@ -535,18 +608,60 @@ export default defineComponent({
         errors.value = ['无法从 SQL 解析 SELECT 列表']
         return
       }
-      const list = m[1].split(',').map((s) => s.trim()).filter(Boolean)
+      // 不能直接 split(','): 函数参数也可能包含逗号，例如 LAG(amount, 1)、COALESCE(a, b)。
+      // 只在括号深度为 0 且不在字符串内时切分 SELECT 列表。
+      const list: string[] = []
+      let start = 0
+      let depth = 0
+      let quote = ''
+      for (let i = 0; i < m[1].length; i++) {
+        const ch = m[1][i]
+        if (quote) {
+          if (ch === quote && m[1][i - 1] !== '\\') quote = ''
+          continue
+        }
+        if (ch === "'" || ch === '"' || ch === '`') {
+          quote = ch
+        } else if (ch === '(') {
+          depth++
+        } else if (ch === ')') {
+          depth = Math.max(0, depth - 1)
+        } else if (ch === ',' && depth === 0) {
+          const item = m[1].substring(start, i).trim()
+          if (item) list.push(item)
+          start = i + 1
+        }
+      }
+      const last = m[1].substring(start).trim()
+      if (last) list.push(last)
+
       cfg.value.outputs = list.map((expr) => {
         // 如果是 "expr AS alias",提取 alias
         const am = expr.match(/\bAS\s+([a-zA-Z_][a-zA-Z0-9_]*)\s*$/i)
         if (am) {
-          return { name: am[1], expr, type: 'STRING' }
+          return { name: am[1], expr, type: inferOutputType(expr) }
         }
         // 普通列默认使用最后一段字段名，例如 source1.ID → ID。
         const simpleName = expr.trim().match(/(?:^|\.)([a-zA-Z_][a-zA-Z0-9_]*)$/)
-        return { name: simpleName ? simpleName[1] : '', expr, type: 'STRING' }
+        return { name: simpleName ? simpleName[1] : '', expr, type: inferOutputType(expr) }
       })
       errors.value = []
+    }
+
+    // 根据表达式做保守的类型识别；无法确定时才回退 STRING，避免把明显的数值/时间字段全部识别成字符串。
+    const inferOutputType = (expr: string): string => {
+      const normalized = expr.toUpperCase()
+      const cast = normalized.match(/\bCAST\s*\([\s\S]*?\s+AS\s+(BIGINT|INT|INTEGER|DECIMAL|DOUBLE|FLOAT|DATE|TIMESTAMP|BOOLEAN)\s*\)/)
+      if (cast) {
+        if (cast[1] === 'INT' || cast[1] === 'INTEGER') return 'BIGINT'
+        if (cast[1] === 'DOUBLE' || cast[1] === 'FLOAT') return 'DECIMAL'
+        return cast[1]
+      }
+      if (/\b(COUNT|ROW_NUMBER|RANK|DENSE_RANK)\s*\(/.test(normalized)) return 'BIGINT'
+      if (/\b(SUM|AVG|MIN|MAX)\s*\(/.test(normalized)) return 'DECIMAL'
+      if (/\b(CURRENT_DATE|DATE_FORMAT|TO_DATE)\s*\(/.test(normalized)) return 'DATE'
+      if (/\b(CURRENT_TIMESTAMP|TO_TIMESTAMP)\s*\(/.test(normalized)) return 'TIMESTAMP'
+      return 'STRING'
     }
 
     // 保存
@@ -656,14 +771,17 @@ export default defineComponent({
             h('section', { class: 'etl-node-config-section sql-config-section' }, [
               h('div', { class: 'etl-node-config-section-heading' }, [
                 h('span', {}, '自定义 SQL'),
-                h('span', { class: 'etl-node-config-section-hint' }, cfg.value.sql ? `${cfg.value.sql.length} 个字符` : '未填写')
+                h(NSpace, { size: 6, align: 'center' }, () => [
+                  h('span', { class: 'etl-node-config-section-hint' }, cfg.value.sql ? `${cfg.value.sql.length} 个字符` : '未填写'),
+                  h(NButton, { size: 'tiny', secondary: true, disabled: !cfg.value.sql, onClick: beautifySql }, () => '美化 SQL')
+                ])
               ]),
               h(NAlert, { type: 'info', showIcon: true, style: { marginBottom: '10px' } }, {
                 default: () => props.upstreams.length === 0
                   ? '本节点无入边，SQL 中可直接引用目标表。'
                   : (props.upstreams.length === 1
                     ? `上游表 ${props.upstreams[0].label} 可使用别名 ${cfg.value.upstreamAliases[0] || props.upstreams[0].alias} 引用。`
-                    : `已接入 ${props.upstreams.length} 张表，请使用上方 SQL 别名组合查询。`)
+              : `已接入 ${props.upstreams.length} 张表，可使用 FROM upstreams，或显式写 FROM source1 a LEFT/RIGHT/INNER JOIN source2 b ON ...。`)
               }),
               h('div', { class: 'sql-editor-shell' }, [
                 h('div', { class: 'sql-editor-wrap' }, [
@@ -732,9 +850,7 @@ export default defineComponent({
                   h('div', { class: 'sql-output-header' }, [
                     h('span', {}, '#'),
                     h('span', {}, '输出字段名'),
-                    h('span', {}, '表达式'),
-                    h('span', {}, '类型'),
-                    h('span', {}, '操作')
+                    h('span', {}, '输出字段类型')
                   ]),
                   ...cfg.value.outputs.map((output, idx) => h('div', { class: 'sql-output-row' }, [
                     h('span', { class: 'sql-output-index' }, String(idx + 1)),
@@ -744,26 +860,12 @@ export default defineComponent({
                       size: 'small',
                       onUpdateValue: (v: string) => { output.name = v }
                     }),
-                    h(NInput, {
-                      value: output.expr,
-                      placeholder: '例如 COALESCE(a.id, b.id)',
-                      size: 'small',
-                      onUpdateValue: (v: string) => { output.expr = v }
-                    }),
                     h(NSelect, {
                       value: output.type,
                       size: 'small',
                       options: outputTypeOptions,
                       onUpdateValue: (v: string) => { output.type = v }
-                    }),
-                    h(NSpace, { size: 2, class: 'sql-output-actions' }, () => [
-                      h(NButton, { size: 'tiny', quaternary: true, onClick: () => upOutput(idx), disabled: idx === 0 }, () => '↑'),
-                      h(NButton, { size: 'tiny', quaternary: true, onClick: () => downOutput(idx), disabled: idx === cfg.value.outputs.length - 1 }, () => '↓'),
-                      h(NPopconfirm, { onPositiveClick: () => removeOutput(idx) }, {
-                        default: () => `确认删除输出字段 "${output.name || '#' + (idx + 1)}" ?`,
-                        trigger: () => h(NButton, { size: 'tiny', quaternary: true, type: 'error' }, () => '删')
-                      })
-                    ])
+                    })
                   ]))
                 ]),
               h(NSpace, { style: { marginTop: '10px' } }, () => [

@@ -540,6 +540,13 @@ $bgLight: #ffffff;
   width: 100%;
 }
 
+// 映射内容较长，控件文字使用紧凑字号，避免来源字段和表达式拥挤。
+:global(.etl-field-mapping-row .n-input__input-el),
+:global(.etl-field-mapping-row .n-base-selection-label),
+:global(.etl-field-mapping-row .n-base-selection-input__content) {
+  font-size: 12px;
+}
+
 :global(.etl-field-mapping-row.disabled) {
   background: #f8fafc;
 }
@@ -1038,10 +1045,10 @@ $bgLight: #ffffff;
 :global(.sql-output-header),
 :global(.sql-output-row) {
   display: grid;
-  grid-template-columns: 28px minmax(104px, .9fr) minmax(132px, 1.25fr) 100px 76px;
+  grid-template-columns: 28px minmax(150px, 1fr) minmax(120px, .8fr);
   align-items: center;
   gap: 8px;
-  min-width: 560px;
+  min-width: 360px;
   padding: 7px 10px;
 }
 

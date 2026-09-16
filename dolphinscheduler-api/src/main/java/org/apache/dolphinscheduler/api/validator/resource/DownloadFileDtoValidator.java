@@ -36,9 +36,17 @@ public class DownloadFileDtoValidator extends AbstractResourceValidator<Download
         String fileAbsolutePath = downloadFileDto.getFileAbsolutePath();
         User loginUser = downloadFileDto.getLoginUser();
 
-        exceptionResourceNotExists(fileAbsolutePath);
         exceptionResourceAbsolutePathInvalidated(fileAbsolutePath);
         exceptionResourceIsNotFile(fileAbsolutePath);
         exceptionUserNoResourcePermission(loginUser, fileAbsolutePath);
+        // ETL 内容存储在 t_ds_etl_content，不在 storageOperator 中创建物理文件。
+        // 普通资源仍然必须校验文件是否存在。
+        if (!isEtlResourcePath(fileAbsolutePath)) {
+            exceptionResourceNotExists(fileAbsolutePath);
+        }
+    }
+
+    private boolean isEtlResourcePath(String path) {
+        return path != null && (path.contains("/etl/") || path.endsWith("/etl"));
     }
 }

@@ -73,6 +73,7 @@ import org.apache.dolphinscheduler.common.utils.FileUtils;
 import org.apache.dolphinscheduler.dao.entity.Tenant;
 import org.apache.dolphinscheduler.dao.entity.User;
 import org.apache.dolphinscheduler.dao.repository.TenantDao;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.dolphinscheduler.dao.repository.UserDao;
 import org.apache.dolphinscheduler.plugin.storage.api.StorageEntity;
 import org.apache.dolphinscheduler.plugin.storage.api.StorageOperator;
@@ -85,6 +86,7 @@ import java.nio.file.Files;
 import java.nio.file.Paths;
 import java.util.List;
 import java.util.ArrayList;
+import java.util.Locale;
 import java.util.stream.Collectors;
 
 import javax.servlet.http.HttpServletResponse;
@@ -310,23 +312,47 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
 
         Integer pageNo = pagingResourceItemRequest.getPageNo();
         Integer pageSize = pagingResourceItemRequest.getPageSize();
+        String keyword = StringUtils.defaultString(pagingResourceItemRequest.getResourceNameKeyWord())
+                .trim().toLowerCase(Locale.ROOT);
 
         List<StorageEntity> storageEntities = resourceAbsolutePaths.stream()
                 .flatMap(resourceAbsolutePath -> storageOperator.listStorageEntity(resourceAbsolutePath).stream())
                 .filter(entity -> pagingResourceItemRequest.getResourceType() != ResourceType.ETL || entity.isDirectory())
                 .collect(Collectors.toList());
 
-        List<ResourceItemVO> databaseItems = pagingResourceItemRequest.getResourceType() == ResourceType.ETL
-                ? resourceAbsolutePaths.stream().flatMap(path -> databaseEtlContentService.list(path).stream())
-                .map(record -> toResourceItem(record)).collect(Collectors.toList())
-                : new ArrayList<>();
+        List<ResourceItemVO> databaseItems = new ArrayList<>();
+        if (pagingResourceItemRequest.getResourceType() == ResourceType.ETL) {
+            if (keyword.isEmpty()) {
+                // 浏览目录时只返回当前目录的直接子作业。
+                resourceAbsolutePaths.stream().flatMap(path -> databaseEtlContentService.list(path).stream())
+                        .map(this::toResourceItem).forEach(databaseItems::add);
+            } else {
+                // 搜索时跨目录查询数据库中的 ETL 作业，不能只查当前目录的直接子项。
+                String[] prefixes = resourceAbsolutePaths.stream()
+                        .map(path -> path.endsWith("/") ? path : path + "/")
+                        .toArray(String[]::new);
+                databaseEtlContentService.listAll().stream()
+                        .filter(record -> java.util.Arrays.stream(prefixes)
+                                .anyMatch(record.getFullName()::startsWith))
+                        .map(this::toResourceItem)
+                        .forEach(databaseItems::add);
+            }
+        }
 
-        List<ResourceItemVO> allItems = storageEntities.stream().map(ResourceItemVO::new)
+        // ETL 搜索结果只来自数据库，避免把文件资源目录混入 ETL 作业结果。
+        List<ResourceItemVO> allItems = (pagingResourceItemRequest.getResourceType() == ResourceType.ETL && !keyword.isEmpty())
+                ? new ArrayList<>(databaseItems)
+                : storageEntities.stream().map(ResourceItemVO::new).collect(Collectors.toList());
+        if (!(pagingResourceItemRequest.getResourceType() == ResourceType.ETL && !keyword.isEmpty())) {
+            allItems.addAll(databaseItems);
+        }
+        List<ResourceItemVO> matchedItems = allItems.stream()
+                .filter(item -> keyword.isEmpty()
+                        || StringUtils.defaultString(item.getFileName()).toLowerCase(Locale.ROOT).contains(keyword)
+                        || StringUtils.defaultString(item.getAlias()).toLowerCase(Locale.ROOT).contains(keyword)
+                        || StringUtils.defaultString(item.getFullName()).toLowerCase(Locale.ROOT).contains(keyword))
                 .collect(Collectors.toList());
-        allItems.addAll(databaseItems);
-        List<ResourceItemVO> result = allItems.stream()
-                .filter(item -> item.getFileName()
-                        .contains(pagingResourceItemRequest.getResourceNameKeyWord()))
+        List<ResourceItemVO> result = matchedItems.stream()
                 .skip((long) (pageNo - 1) * pageSize)
                 .limit(pageSize)
                 .collect(Collectors.toList());
@@ -334,7 +360,7 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         return PageInfo.<ResourceItemVO>builder()
                 .pageNo(pagingResourceItemRequest.getPageNo())
                 .pageSize(pagingResourceItemRequest.getPageSize())
-                .total(allItems.size())
+                .total(matchedItems.size())
                 .totalList(result)
                 .build();
     }

@@ -1,0 +1,1 @@
+import{s as r}from"./service.a1d4770e.js";function s(e,t){return r({url:`/projects/${t}/executors/execute`,method:"post",data:e})}function c(e,t){return r({url:`/projects/${t}/executors/execute-task`,method:"post",data:e})}function u(e,t){return r({url:`/projects/${t}/executors/start-workflow-instance`,method:"post",data:e})}export{s as a,c as e,u as s};

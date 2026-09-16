@@ -104,6 +104,58 @@ function normalizeColumnType(type: any, fieldName?: any): string {
   return value.replace(/\s+UNSIGNED\b/g, '') || 'STRING'
 }
 
+// Sink 映射只允许“原样字段”或“字段类型转换”，避免把任意 SQL 片段误写进 INSERT。
+function normalizedMappingType(type: any): string {
+  return String(type || 'STRING').trim().toUpperCase().replace(/\s+UNSIGNED\b/g, '')
+}
+
+function mappingTypeFamily(type: any): string {
+  const value = normalizedMappingType(type)
+  if (/^(TINYINT|SMALLINT|INT|INTEGER|BIGINT|DECIMAL|NUMERIC|FLOAT|DOUBLE|REAL)/.test(value)) return 'NUMBER'
+  if (/^(CHAR|VARCHAR|STRING|TEXT)/.test(value)) return 'STRING'
+  if (/^(DATE|TIME|TIMESTAMP)/.test(value)) return 'TIME'
+  if (value === 'BOOLEAN' || value === 'BOOL') return 'BOOLEAN'
+  return value
+}
+
+function buildMappingExpression(sourceField: string, sourceType: string, targetType: string): string {
+  if (!sourceField) return ''
+  const sourceValue = normalizedMappingType(sourceType)
+  const targetValue = normalizedMappingType(targetType)
+  if (sourceValue === targetValue) return sourceField
+  // 同族类型差异用 CAST；跨族转换使用 TRY_CAST，非法值变为 NULL，避免整个 ETL 作业失败。
+  return mappingTypeFamily(sourceType) === mappingTypeFamily(targetType)
+    ? `CAST(${sourceField} AS ${targetValue})`
+    : `TRY_CAST(${sourceField} AS ${targetValue})`
+}
+
+// 表达式栏是给用户看的，隐藏内部表别名；真正提交给 Flink 的 expr 保持完整引用。
+function displayMappingExpression(expression: string): string {
+  return String(expression || '').replace(/\b[A-Za-z_][A-Za-z0-9_]*\./g, '')
+}
+
+function validateSinkMappings(config: any): string[] {
+  const mappings = Array.isArray(config?.fieldMappings) ? config.fieldMappings : []
+  const errors: string[] = []
+  const sourcePattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/
+  const castPattern = /^(?:TRY_)?CAST\(([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s+AS\s+([A-Za-z][A-Za-z0-9]*(?:\([0-9]+(?:\s*,\s*[0-9]+)?\))?)\)$/i
+  mappings.forEach((mapping: any) => {
+    if (mapping?.enabled === false) return
+    const target = String(mapping?.target || '').trim()
+    const source = String(mapping?.sourceField || '').trim()
+    const expr = String(mapping?.expr || '').trim()
+    if (!target) return
+    if (!source) {
+      errors.push(`目标字段 ${target} 未选择上游字段`)
+      return
+    }
+    if (!expr || (!sourcePattern.test(expr) && !castPattern.test(expr))) {
+      errors.push(`字段 ${target} 的转换表达式不合法，仅支持原样字段、CAST 或 TRY_CAST`)
+    }
+  })
+  return errors
+}
+
 const NODE_ICON_SVG: Record<string, string> = {
   source: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="30" height="30"><rect x="4" y="6" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><rect x="4" y="13" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><rect x="4" y="20" width="22" height="4" rx="1" fill="${COLOR_DEFAULT}"/><circle cx="8" cy="8" r="1.2" fill="#fff"/><circle cx="8" cy="15" r="1.2" fill="#fff"/><circle cx="8" cy="22" r="1.2" fill="#fff"/></svg>`,
   transform: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 30 30" width="30" height="30"><path d="M5 6h16l5 5v13H5z" fill="none" stroke="${COLOR_DEFAULT}" stroke-width="2"/><path d="M21 6v5h5" fill="none" stroke="${COLOR_DEFAULT}" stroke-width="2"/><path d="M10 14l-3 3 3 3" fill="none" stroke="${COLOR_DEFAULT}" stroke-width="2" stroke-linecap="round"/><path d="M18 14l3 3-3 3" fill="none" stroke="${COLOR_DEFAULT}" stroke-width="2" stroke-linecap="round"/></svg>`,
@@ -544,7 +596,13 @@ export default defineComponent({
             const upstreamData = upstream?.getData() || {}
             const upstreamConfig = upstreamData.config || {}
             const alias = String(upstreamConfig.alias || upstreamData.label || upstream?.id || 'upstream').trim()
-            const columns = getNodeOutputFields(upstreamConfig)
+            let columns = getNodeOutputFields(upstreamConfig)
+            if (upstreamData.type === 'compare') {
+              const compareFields = [{ name: 'cmp_op', type: 'STRING' }, { name: 'cmp_id', type: 'BIGINT' }]
+              columns = [...compareFields, ...columns.filter((column: any) =>
+                !compareFields.some((field) => field.name.toLowerCase() === String(column.name).toLowerCase())
+              )]
+            }
             columns.forEach((column: any) => {
               const field = column.name
               if (!field) return
@@ -552,12 +610,13 @@ export default defineComponent({
               if (seen.has(key)) return
               seen.add(key)
               const type = column.type
-              fields.push({
-                value: key,
-                label: `${key} · ${type}`,
-                field,
-                type,
-                alias
+                fields.push({
+                  value: key,
+                  // 下拉框只展示字段名和类型，内部 value 仍保留 alias.field 供 SQL 使用。
+                  label: `${field}(${type})`,
+                  field,
+                  type,
+                  alias
               })
             })
           })
@@ -954,7 +1013,13 @@ export default defineComponent({
         // 兜底：dir 可能是字符串，也可能是 { data: '...' } 包装
         const dirStr: string =
           typeof dir === 'string' ? dir : (dir && (dir.data as string)) || '/tmp/dolphinscheduler/etl/'
-        const base = dirStr.endsWith('/') ? dirStr : dirStr + '/'
+        const normalizedBase = dirStr.endsWith('/') ? dirStr : dirStr + '/'
+        // standalone 的 ETL 根目录可能返回全局路径，但资源实际按租户目录保存。
+        // 设计器直接打开且 URL 没有 prefix 时，使用当前部署已有的默认目录，
+        // 避免生成 /tmp/dolphinscheduler/etl/ 这种不可写/非法资源路径。
+        const base = normalizedBase === '/tmp/dolphinscheduler/etl/'
+          ? '/tmp/dolphinscheduler/default/etl/demo1/'
+          : normalizedBase
         // The resource API may return the global ETL base directory while the
         // list page carries a tenant-specific directory (for example
         // /tmp/dolphinscheduler/default/etl/demo1). Preserve the directory
@@ -966,7 +1031,8 @@ export default defineComponent({
           directory.replace(/\/+$/g, '').split('/').filter(Boolean).pop() || '根目录'
 
         // 加载目录列表（用作保存路径下拉）
-        availableDirs.value = [{ label: '根目录', value: base }]
+        // 根目录实际可能是租户下的 demo1，不能把真实目录统一显示成“根目录”。
+        availableDirs.value = [{ label: getDirectoryLabel(base), value: base }]
         try {
           const listRes: any = await queryResourceList({
             type: 'ETL',
@@ -977,16 +1043,29 @@ export default defineComponent({
             || (listRes as any)?.data
             || listRes
             || []
-          ;(Array.isArray(entries) ? entries : []).forEach((item: any) => {
-            if (item && item.directory && item.fullName) {
-              const fn: string = item.fullName
-              const subDir = fn.endsWith('/') ? fn : fn + '/'
-              availableDirs.value.push({
-                label: getDirectoryLabel(subDir) + '/',
-                value: subDir
-              })
-            }
-          })
+          // ETL 目录接口返回的是树，且后端历史 DTO 的字段名是 dirctory
+          // （少一个 e），不能只判断 item.directory，否则目录树会被全部过滤掉。
+          const appendDirectories = (items: any[]) => {
+            items.forEach((item: any) => {
+              if (!item) return
+              const isDirectory = Boolean(
+                item.directory ?? item.dirctory ?? item.isDirectory ?? item.isDirctory
+              )
+              if (isDirectory && item.fullName) {
+                const subDir = String(item.fullName).endsWith('/')
+                  ? String(item.fullName)
+                  : `${item.fullName}/`
+                if (!availableDirs.value.some((directory) => directory.value === subDir)) {
+                  availableDirs.value.push({
+                    label: getDirectoryLabel(subDir),
+                    value: subDir
+                  })
+                }
+              }
+              if (Array.isArray(item.children)) appendDirectories(item.children)
+            })
+          }
+          appendDirectories(Array.isArray(entries) ? entries : [])
           // 当前作业所在目录必须始终可选，即使目录接口只返回文件。
           if (requestedDir && !availableDirs.value.some((d) => d.value === requestedDir)) {
             availableDirs.value.push({ label: getDirectoryLabel(requestedDir) + '/', value: requestedDir })
@@ -1419,6 +1498,16 @@ export default defineComponent({
           .map((item) => `${item.label}：${[...item.missing, ...item.errors].join('、')}`)
           .join('；')
         message.error(`请先完成表输入配置：${detail}`)
+        return
+      }
+      const invalidMappings = graph.value.getNodes()
+        .filter((node: any) => (node.getData() || {}).type === 'sink')
+        .flatMap((node: any) => {
+          const data = node.getData() || {}
+          return validateSinkMappings(data.config || {}).map((error) => `${data.label || 'sink'}：${error}`)
+        })
+      if (invalidMappings.length > 0) {
+        message.error(`字段映射校验失败：${invalidMappings.join('；')}`)
         return
       }
       if (!jobName.value.trim()) {
@@ -1995,6 +2084,13 @@ export default defineComponent({
         if (validation.status !== 'ready') {
           const detail = [...validation.missing, ...validation.errors].join('、')
           message.error(`表输入配置未完成：${detail}`)
+          return
+        }
+      }
+      if (activeNodeMeta.value?.type === 'sink') {
+        const errors = validateSinkMappings(activeNodeConfig.value)
+        if (errors.length > 0) {
+          message.error(`字段映射校验失败：${errors.join('；')}`)
           return
         }
       }
@@ -2673,17 +2769,23 @@ export default defineComponent({
                   const mappings = targetCols.map((c: any) => {
                     const target = String(c.name || '').trim()
                     const existing = existingMappings.find((m: any) => String(m?.target || '').trim() === target)
-                    const matchingSource = sinkSourceFields.value.find((field) => field.field === target)
-                    const existingExpr = String(existing?.expr || '').trim()
+                    // 数据库字段名可能来自 Oracle/达梦而被保留为大写，目标表字段
+                    // 通常是小写；映射自动匹配必须大小写不敏感，否则会退化成
+                    // 未限定的 `username`，在 Flink SQL 中无法解析。
+                    const matchingSource = sinkSourceFields.value.find((field) =>
+                      field.field.toLowerCase() === target.toLowerCase()
+                    )
                     const existingSourceField = String(existing?.sourceField || '').trim()
                     const sourceField = existingSourceField || matchingSource?.value || ''
+                    const sourceType = existing?.sourceType || matchingSource?.type || 'STRING'
+                    const targetType = String(c.type || existing?.type || 'STRING')
+                    const customExpr = String(existing?.customExpr || '').trim()
                     return {
                       target,
                       sourceField,
-                      expr: existingExpr && existingExpr !== target
-                        ? existingExpr
-                        : (sourceField || target),
-                      type: String(c.type || existing?.type || 'STRING'),
+                      sourceType,
+                      expr: customExpr || buildMappingExpression(sourceField, sourceType, targetType),
+                      type: targetType,
                       enabled: existing?.enabled !== false
                     }
                   }).filter((m: any) => m.target)
@@ -2693,7 +2795,8 @@ export default defineComponent({
                     const existing = existingMappings[i]
                     return existing?.enabled !== m.enabled ||
                       String(existing?.sourceField || '').trim() !== m.sourceField ||
-                      String(existing?.expr || '').trim() !== m.expr
+                      String(existing?.expr || '').trim() !== m.expr ||
+                      String(existing?.sourceType || '') !== m.sourceType
                   })
                   if (needsMappingSync) {
                     activeNodeConfig.value.fieldMappings = mappings
@@ -2709,7 +2812,7 @@ export default defineComponent({
                     <section class='etl-node-config-section'>
                       <div class='etl-node-config-section-heading'>
                         <span>字段映射</span>
-                        <span class='etl-node-config-section-hint'>仅映射上方已选字段 · 先选来源字段，再按需填写转换表达式</span>
+                        <span class='etl-node-config-section-hint'>仅映射上方已选字段 · 类型不一致时自动 CAST</span>
                       </div>
                       {mappings.length === 0 ? (
                         <NEmpty size='small' description='请在上方“字段”列表选择要写入的字段' />
@@ -2744,15 +2847,23 @@ export default defineComponent({
                                 filterable
                                 clearable
                                 disabled={m.enabled === false}
-                                onUpdate:value={(v: string | null) => updateMapping(m.target, { sourceField: v || '', expr: v || '' })}
+                                onUpdate:value={(v: string | null) => {
+                                  const source = sinkSourceFields.value.find((field) => field.value === v)
+                                  updateMapping(m.target, {
+                                    sourceField: v || '',
+                                    sourceType: source?.type || 'STRING',
+                                    expr: buildMappingExpression(v || '', source?.type || 'STRING', m.type)
+                                  })
+                                }}
                               />
                               <NInput
                                 size='small'
-                                value={m.expr || ''}
-                                placeholder={m.sourceField ? '可选：CAST(...) 或其他转换表达式' : '请输入来源表达式'}
+                                value={displayMappingExpression(m.expr || '')}
+                                placeholder={m.sourceField ? '自动生成类型转换表达式' : '请先选择来源字段'}
                                 clearable
                                 disabled={m.enabled === false}
-                                onUpdate:value={(v: string) => updateMapping(m.target, { expr: v })}
+                                readonly
+                                title='表达式由来源类型和目标类型自动生成'
                               />
                             </div>
                           ))}

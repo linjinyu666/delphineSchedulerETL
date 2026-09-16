@@ -1,0 +1,1 @@
+import{s as e}from"./service.a1d4770e.js";function t(u){return e({url:"/ui-plugins/query-by-type",method:"get",params:u})}function i(u){return e({url:`/ui-plugins/${u}`,method:"get"})}function n(){return e({url:"/ui-plugins/query-product-info",method:"get"})}export{i as a,t as b,n as q};
