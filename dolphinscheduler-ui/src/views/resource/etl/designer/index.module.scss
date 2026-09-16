@@ -228,7 +228,8 @@ $bgLight: #ffffff;
   min-width: 0;
   min-height: 320px;       // Fix-13.1: 让 scroll 容器有最小高度
   overflow: auto;
-  max-height: 520px;
+  height: var(--sql-editor-height, 420px);
+  max-height: none;
 }
 
 :global(.sql-editor-highlight),
@@ -803,6 +804,72 @@ $bgLight: #ffffff;
   padding: 2px 16px 16px;
   background: #f7f8fa;
   color: #1f2937;
+}
+
+:global(.sql-config-toolbar) {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 42px;
+  margin: -2px 0 12px;
+  padding: 6px 0;
+  background: #f7f8fa;
+}
+
+:global(.sql-config-toolbar-hint) {
+  color: #64748b;
+  font-size: 12px;
+}
+
+:global(.sql-editor-resize-handle) {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 18px;
+  margin: 0 2px 8px;
+  color: #94a3b8;
+  cursor: row-resize;
+  user-select: none;
+  font-size: 10px;
+}
+
+:global(.sql-editor-resize-handle)::before,
+:global(.sql-editor-resize-handle)::after {
+  width: 36px;
+  height: 1px;
+  margin: 0 8px;
+  background: #cbd5e1;
+  content: '';
+}
+
+:global(.sql-output-summary) {
+  overflow: hidden;
+  padding: 9px 12px;
+  border: 1px solid #e2e8f0;
+  border-radius: 6px;
+  color: #475569;
+  background: #f8fafc;
+  font-family: Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+:global(.sql-config-drawer--fullscreen) {
+  width: 100vw !important;
+}
+
+:global(.sql-config-drawer--fullscreen .n-drawer-content) {
+  height: 100vh;
+}
+
+:global(.sql-config-drawer--fullscreen .sql-config-body) {
+  min-height: calc(100vh - 120px);
 }
 
 :global(.sql-config-steps) {

@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 
-import { defineComponent, ref, computed, watch, h, nextTick } from 'vue'
+import { defineComponent, ref, computed, watch, h, nextTick, onBeforeUnmount } from 'vue'
 import {
   NDrawer, NDrawerContent, NButton, NSpace, NInput, NSelect,
   NEmpty, NAlert, NTag, NTooltip
@@ -64,6 +64,26 @@ export default defineComponent({
       outputs: []
     })
     const errors = ref<string[]>([])
+    const isFullscreen = ref(false)
+    const outputCollapsed = ref(false)
+    const editorHeight = ref(420)
+    const resizing = ref(false)
+
+    const onResizeMove = (event: MouseEvent) => {
+      if (!resizing.value) return
+      editorHeight.value = Math.max(260, Math.min(window.innerHeight - 220, event.clientY - 120))
+    }
+    const stopResize = () => {
+      resizing.value = false
+      window.removeEventListener('mousemove', onResizeMove)
+      window.removeEventListener('mouseup', stopResize)
+    }
+    const startResize = () => {
+      resizing.value = true
+      window.addEventListener('mousemove', onResizeMove)
+      window.addEventListener('mouseup', stopResize)
+    }
+    onBeforeUnmount(stopResize)
     // Fix-13.8: 别名 inline 校验
     const aliasStatus = computed<'success' | 'warning' | 'error' | undefined>(() => {
       const a = (cfg.value.alias || '').trim()
@@ -119,6 +139,9 @@ export default defineComponent({
       if (!sql) {
         errs.push('SQL 不能为空')
       } else {
+        if (/(^|\n)\s*#/.test(sql)) {
+          errs.push('Flink SQL 不支持 # 注释，请使用 -- 行注释或 /* */ 块注释')
+        }
         // 去掉注释
         const noComment = sql.replace(/--.*$/gm, '').replace(/\/\*[\s\S]*?\*\//g, '')
         // 禁止 SELECT *
@@ -686,10 +709,11 @@ export default defineComponent({
     return () =>
       h(NDrawer, {
         show: props.visible,
-        width: 600,
+        width: isFullscreen.value ? '100vw' : 600,
         placement: 'right',
         resizable: true,
-        style: 'max-width: 92vw;',
+        class: isFullscreen.value ? 'sql-config-drawer sql-config-drawer--fullscreen' : 'sql-config-drawer',
+        style: isFullscreen.value ? 'max-width: 100vw;' : 'max-width: 92vw;',
         maskClosable: false,
         onUpdateShow: (v: boolean) => emit('update:visible', v)
       }, {
@@ -699,6 +723,13 @@ export default defineComponent({
           nativeScrollbar: false
         }, {
           default: () => h('div', { class: 'sql-config-body' }, [
+            h('div', { class: 'sql-config-toolbar' }, [
+              h('span', { class: 'sql-config-toolbar-hint' }, '长 SQL 建议使用全屏编辑'),
+              h(NSpace, { size: 6 }, () => [
+                h(NButton, { size: 'small', onClick: () => { outputCollapsed.value = !outputCollapsed.value } }, () => outputCollapsed.value ? '展开输出字段' : '收起输出字段'),
+                h(NButton, { size: 'small', type: isFullscreen.value ? 'primary' : 'default', onClick: () => { isFullscreen.value = !isFullscreen.value } }, () => isFullscreen.value ? '退出全屏' : '全屏编辑')
+              ])
+            ]),
             errors.value.length > 0
               ? h(NAlert, { type: 'error', showIcon: true, style: { marginBottom: '12px' } }, {
                   default: () => h('ul', { style: { margin: 0, paddingLeft: '20px' } },
@@ -783,7 +814,7 @@ export default defineComponent({
                     ? `上游表 ${props.upstreams[0].label} 可使用别名 ${cfg.value.upstreamAliases[0] || props.upstreams[0].alias} 引用。`
               : `已接入 ${props.upstreams.length} 张表，可使用 FROM upstreams，或显式写 FROM source1 a LEFT/RIGHT/INNER JOIN source2 b ON ...。`)
               }),
-              h('div', { class: 'sql-editor-shell' }, [
+              h('div', { class: 'sql-editor-shell', style: { '--sql-editor-height': `${editorHeight.value}px` } }, [
                 h('div', { class: 'sql-editor-wrap' }, [
                   h('div', {
                     class: 'sql-editor-gutter',
@@ -832,6 +863,10 @@ export default defineComponent({
               ])
             ]),
 
+            h('div', { class: 'sql-editor-resize-handle', role: 'separator', 'aria-label': '调整 SQL 编辑区高度', onMousedown: startResize }, [
+              h('span', {}, '拖动调整编辑区高度')
+            ]),
+
             // 04 输出列：明确声明输出，供下游节点字段补全和校验使用。
             h('section', { class: 'etl-node-config-section sql-config-section sql-output-section' }, [
               h('div', { class: 'etl-node-config-section-heading' }, [
@@ -839,14 +874,20 @@ export default defineComponent({
                   '解析输出列 ',
                   h('span', { class: 'etl-node-config-required' }, '*')
                 ]),
-                h('span', { class: 'etl-node-config-section-hint' }, `${cfg.value.outputs.length} 个字段`)
+                h(NSpace, { size: 6, align: 'center' }, () => [
+                  h('span', { class: 'etl-node-config-section-hint' }, `${cfg.value.outputs.length} 个字段`),
+                  h(NButton, { size: 'tiny', quaternary: true, onClick: () => { outputCollapsed.value = !outputCollapsed.value } }, () => outputCollapsed.value ? '展开' : '折叠')
+                ])
               ]),
-              h(NAlert, { type: 'warning', showIcon: true, style: { marginBottom: '10px' } }, {
-                default: () => '必须明确写出每个输出字段的名称和类型，下游节点才能稳定引用。'
-              }),
-              cfg.value.outputs.length === 0
-                ? h(NEmpty, { description: '点击“从 SQL 解析输出列”或“添加输出字段”' })
-                : h('div', { class: 'sql-output-table' }, [
+              outputCollapsed.value
+                ? h('div', { class: 'sql-output-summary' }, cfg.value.outputs.map((o) => `${o.name || '?'}(${o.type || 'STRING'})`).join(' · ') || '暂无输出字段')
+                : h('div', {}, [
+                  h(NAlert, { type: 'warning', showIcon: true, style: { marginBottom: '10px' } }, {
+                    default: () => '必须明确写出每个输出字段的名称和类型，下游节点才能稳定引用。'
+                  }),
+                  cfg.value.outputs.length === 0
+                    ? h(NEmpty, { description: '点击“从 SQL 解析输出列”或“添加输出字段”' })
+                    : h('div', { class: 'sql-output-table' }, [
                   h('div', { class: 'sql-output-header' }, [
                     h('span', {}, '#'),
                     h('span', {}, '输出字段名'),
@@ -867,11 +908,12 @@ export default defineComponent({
                       onUpdateValue: (v: string) => { output.type = v }
                     })
                   ]))
-                ]),
-              h(NSpace, { style: { marginTop: '10px' } }, () => [
-                h(NButton, { size: 'small', onClick: addOutput, type: 'primary', ghost: true }, () => '+ 添加输出字段'),
-                h(NButton, { size: 'small', onClick: parseFromSql, disabled: !cfg.value.sql }, () => '↑ 从 SQL 解析输出列')
-              ])
+                    ]),
+                  h(NSpace, { style: { marginTop: '10px' } }, () => [
+                    h(NButton, { size: 'small', onClick: addOutput, type: 'primary', ghost: true }, () => '+ 添加输出字段'),
+                    h(NButton, { size: 'small', onClick: parseFromSql, disabled: !cfg.value.sql }, () => '↑ 从 SQL 解析输出列')
+                  ])
+                ])
             ])
           ]),
         footer: () => h('div', { class: 'sql-config-footer' }, [

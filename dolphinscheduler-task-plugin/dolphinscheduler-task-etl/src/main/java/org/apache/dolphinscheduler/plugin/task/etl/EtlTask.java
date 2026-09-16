@@ -371,10 +371,11 @@ public class EtlTask extends AbstractTask {
             w.write("sources=" + safe(etlParameters.getSources()) + "\n\n");
             w.write("sinks=" + safe(etlParameters.getSinks()) + "\n\n");
 
-            // sql 整段写出（多行变单行，避免 properties 文件截断）
+            // sql 使用 Properties 的转义形式写出。不能把换行直接压成空格：
+            // 否则 `-- 注释` 会把后续 SQL 也吞掉；写成 `\n` 后 Properties.load
+            // 会在 Flink 执行器读取时恢复为真正的换行。
             String sql = etlParameters.getSql() == null ? "" : etlParameters.getSql();
-            sql = sql.replaceAll("\\s+", " ").trim();
-            w.write("sql=" + sql + "\n\n");
+            w.write("sql=" + escapePropertiesValue(sql) + "\n\n");
 
             w.write("parallelism=" + etlParameters.getParallelism() + "\n");
         }
@@ -384,6 +385,13 @@ public class EtlTask extends AbstractTask {
 
     private static String safe(String s) {
         return s == null ? "" : s;
+    }
+
+    private static String escapePropertiesValue(String value) {
+        return value.replace("\\", "\\\\")
+                .replace("\r", "\\r")
+                .replace("\n", "\\n")
+                .replace("\t", "\\t");
     }
 
     /**
