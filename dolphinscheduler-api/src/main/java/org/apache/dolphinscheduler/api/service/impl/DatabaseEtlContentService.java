@@ -2,16 +2,28 @@
  * Licensed to the Apache Software Foundation (ASF) under one or more
  * contributor license agreements.  See the NOTICE file distributed with
  * this work for additional information regarding copyright ownership.
+ * The ASF licenses this file to You under the Apache License, Version 2.0
+ * (the "License"); you may not use this file except in compliance with
+ * the License.  You may obtain a copy of the License at
+ *
+ *    http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
  */
+
 package org.apache.dolphinscheduler.api.service.impl;
-
-import org.springframework.jdbc.core.JdbcTemplate;
-import org.springframework.stereotype.Service;
-
-import javax.annotation.PostConstruct;
 
 import java.util.List;
 import java.util.stream.Collectors;
+
+import javax.annotation.PostConstruct;
+
+import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.stereotype.Service;
 
 /** Stores ETL JSON content in the DS database. */
 @Service
@@ -60,7 +72,7 @@ public class DatabaseEtlContentService {
     public List<ContentRecord> list(String parentPath) {
         String prefix = parentPath.endsWith("/") ? parentPath : parentPath + "/";
         return jdbcTemplate.query("SELECT full_name,file_name,content_size,create_time,update_time FROM " + TABLE
-                        + " WHERE full_name LIKE ? ORDER BY file_name",
+                + " WHERE full_name LIKE ? ORDER BY file_name",
                 ps -> ps.setString(1, prefix + "%"), (rs, rowNum) -> new ContentRecord(
                         rs.getString("full_name"), rs.getString("file_name"), rs.getLong("content_size"),
                         rs.getTimestamp("create_time"), rs.getTimestamp("update_time")))
@@ -71,7 +83,8 @@ public class DatabaseEtlContentService {
 
     public List<ContentRecord> listAll() {
         return jdbcTemplate.query("SELECT full_name,file_name,content_size,create_time,update_time FROM " + TABLE
-                        + " ORDER BY full_name", (rs, rowNum) -> new ContentRecord(
+                + " ORDER BY full_name",
+                (rs, rowNum) -> new ContentRecord(
                         rs.getString("full_name"), rs.getString("file_name"), rs.getLong("content_size"),
                         rs.getTimestamp("create_time"), rs.getTimestamp("update_time")));
     }
@@ -81,6 +94,7 @@ public class DatabaseEtlContentService {
     }
 
     public static class ContentRecord {
+
         private final String fullName;
         private final String fileName;
         private final long size;
@@ -96,10 +110,20 @@ public class DatabaseEtlContentService {
             this.updateTime = updateTime;
         }
 
-        public String getFullName() { return fullName; }
-        public String getFileName() { return fileName; }
-        public long getSize() { return size; }
-        public java.util.Date getCreateTime() { return createTime; }
-        public java.util.Date getUpdateTime() { return updateTime; }
+        public String getFullName() {
+            return fullName;
+        }
+        public String getFileName() {
+            return fileName;
+        }
+        public long getSize() {
+            return size;
+        }
+        public java.util.Date getCreateTime() {
+            return createTime;
+        }
+        public java.util.Date getUpdateTime() {
+            return updateTime;
+        }
     }
 }

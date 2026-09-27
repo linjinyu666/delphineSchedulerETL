@@ -104,6 +104,9 @@ $bgLight: #ffffff;
     &.icon-shell {
       background-image: url('/images/task-icons/shell.png');
     }
+    &.icon-etl {
+      background-image: url('/images/task-icons/etl.png');
+    }
     &.icon-sub_workflow {
       background-image: url('/images/task-icons/sub_workflow.png');
     }
@@ -213,6 +216,9 @@ $bgLight: #ffffff;
     .sidebar-icon {
       &.icon-shell {
         background-image: url('/images/task-icons/shell_hover.png');
+      }
+      &.icon-etl {
+        background-image: url('/images/task-icons/etl_hover.png');
       }
       &.icon-sub_workflow {
         background-image: url('/images/task-icons/sub_workflow_hover.png');

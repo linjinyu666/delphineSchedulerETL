@@ -92,7 +92,11 @@
 
     <dependencySets>
         <dependencySet>
-            <useTransitiveDependencies>false</useTransitiveDependencies>
+            <!-- datasource-all/task-all/etc. are aggregator artifacts.  Their
+                 actual plugin implementations are transitive dependencies;
+                 omit them and DataSourcePluginManager has no processor at
+                 runtime (editing a datasource then fails with an NPE). -->
+            <useTransitiveDependencies>true</useTransitiveDependencies>
             <outputDirectory>libs</outputDirectory>
         </dependencySet>
     </dependencySets>

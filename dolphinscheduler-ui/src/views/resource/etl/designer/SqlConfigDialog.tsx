@@ -724,7 +724,9 @@ export default defineComponent({
         }, {
           default: () => h('div', { class: 'sql-config-body' }, [
             h('div', { class: 'sql-config-toolbar' }, [
-              h('span', { class: 'sql-config-toolbar-hint' }, '长 SQL 建议使用全屏编辑'),
+              h('span', { class: 'sql-config-toolbar-hint' }, cfg.value.sql.length > 200
+                ? `当前 SQL ${cfg.value.sql.length} 个字符，建议使用全屏编辑`
+                : 'SQL 支持美化、注释和全屏编辑'),
               h(NSpace, { size: 6 }, () => [
                 h(NButton, { size: 'small', onClick: () => { outputCollapsed.value = !outputCollapsed.value } }, () => outputCollapsed.value ? '展开输出字段' : '收起输出字段'),
                 h(NButton, { size: 'small', type: isFullscreen.value ? 'primary' : 'default', onClick: () => { isFullscreen.value = !isFullscreen.value } }, () => isFullscreen.value ? '退出全屏' : '全屏编辑')

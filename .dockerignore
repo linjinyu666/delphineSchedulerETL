@@ -1,0 +1,8 @@
+**
+!dist/
+!dist/target/
+!dist/target/apache-dolphinscheduler-*-bin.tar.gz
+!deploy/
+!deploy/cluster/
+!deploy/cluster/Dockerfile
+!deploy/cluster/entrypoint.sh

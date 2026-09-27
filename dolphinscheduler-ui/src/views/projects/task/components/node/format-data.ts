@@ -125,6 +125,24 @@ export function formatParams(data: INodeData): {
       data.datasourceIds?.length
         ? data.datasourceIds
         : extractEtlDatasourceIds(data.etlContent)
+    taskParams.executionMode = data.executionMode
+    taskParams.localJvmXms = data.localJvmXms
+    taskParams.localJvmXmx = data.localJvmXmx
+    taskParams.localJvmXss = data.localJvmXss
+    taskParams.runtimeMode = data.runtimeMode
+    taskParams.clusterType = data.clusterType
+    taskParams.jobManagerAddress = data.jobManagerAddress
+    taskParams.jobManagerRestPort = data.jobManagerRestPort
+    taskParams.jobManagerCpu = data.jobManagerCpu
+    taskParams.jobManagerMemory = data.jobManagerMemory
+    taskParams.taskManagerCpu = data.taskManagerCpu
+    taskParams.taskManagerMemory = data.taskManagerMemory
+    taskParams.taskManagerCount = data.taskManagerCount
+    taskParams.taskManagerSlots = data.taskManagerSlots
+    taskParams.parallelism = data.parallelism
+    taskParams.checkpointEnabled = data.checkpointEnabled
+    taskParams.checkpointInterval = data.checkpointInterval
+    taskParams.checkpointDir = data.checkpointDir
   }
 
   if (data.taskType === 'SQOOP') {
@@ -551,7 +569,7 @@ function extractEtlDatasourceIds(content?: string): number[] {
   if (!content) return []
   try {
     const parsed = JSON.parse(content.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t'))
-    const ids = (parsed.nodes || [])
+    const ids: number[] = (parsed.nodes || [])
       .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
       .filter((id: number) => Number.isInteger(id) && id > 0)
     return [...new Set(ids)]

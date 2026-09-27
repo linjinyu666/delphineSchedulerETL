@@ -25,10 +25,12 @@ import org.apache.dolphinscheduler.api.dto.resources.CreateFileFromContentReques
 import org.apache.dolphinscheduler.api.dto.resources.CreateFileRequest;
 import org.apache.dolphinscheduler.api.dto.resources.DeleteResourceDto;
 import org.apache.dolphinscheduler.api.dto.resources.DeleteResourceRequest;
+import org.apache.dolphinscheduler.api.dto.resources.Directory;
 import org.apache.dolphinscheduler.api.dto.resources.DownloadFileDto;
 import org.apache.dolphinscheduler.api.dto.resources.DownloadFileRequest;
 import org.apache.dolphinscheduler.api.dto.resources.FetchFileContentDto;
 import org.apache.dolphinscheduler.api.dto.resources.FetchFileContentRequest;
+import org.apache.dolphinscheduler.api.dto.resources.FileLeaf;
 import org.apache.dolphinscheduler.api.dto.resources.PagingResourceItemRequest;
 import org.apache.dolphinscheduler.api.dto.resources.QueryResourceDto;
 import org.apache.dolphinscheduler.api.dto.resources.RenameDirectoryDto;
@@ -36,8 +38,6 @@ import org.apache.dolphinscheduler.api.dto.resources.RenameDirectoryRequest;
 import org.apache.dolphinscheduler.api.dto.resources.RenameFileDto;
 import org.apache.dolphinscheduler.api.dto.resources.RenameFileRequest;
 import org.apache.dolphinscheduler.api.dto.resources.ResourceComponent;
-import org.apache.dolphinscheduler.api.dto.resources.Directory;
-import org.apache.dolphinscheduler.api.dto.resources.FileLeaf;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileDto;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileFromContentDto;
 import org.apache.dolphinscheduler.api.dto.resources.UpdateFileFromContentRequest;
@@ -73,19 +73,19 @@ import org.apache.dolphinscheduler.common.utils.FileUtils;
 import org.apache.dolphinscheduler.dao.entity.Tenant;
 import org.apache.dolphinscheduler.dao.entity.User;
 import org.apache.dolphinscheduler.dao.repository.TenantDao;
-import org.apache.commons.lang3.StringUtils;
 import org.apache.dolphinscheduler.dao.repository.UserDao;
 import org.apache.dolphinscheduler.plugin.storage.api.StorageEntity;
 import org.apache.dolphinscheduler.plugin.storage.api.StorageOperator;
 import org.apache.dolphinscheduler.spi.enums.ResourceType;
 
 import org.apache.commons.collections4.CollectionUtils;
+import org.apache.commons.lang3.StringUtils;
 
 import java.io.File;
 import java.nio.file.Files;
 import java.nio.file.Paths;
-import java.util.List;
 import java.util.ArrayList;
+import java.util.List;
 import java.util.Locale;
 import java.util.stream.Collectors;
 
@@ -301,7 +301,19 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         QueryResourceDto queryResourceDto = pagingResourceItemRequestTransformer.transform(pagingResourceItemRequest);
         List<String> resourceAbsolutePaths = queryResourceDto.getResourceAbsolutePaths();
         if (CollectionUtils.isEmpty(resourceAbsolutePaths)) {
-            return new PageInfo<>(pagingResourceItemRequest.getPageNo(), pagingResourceItemRequest.getPageSize());
+            // ETL 作业保存在 t_ds_etl_content，根路由通常没有携带 fullName。
+            // 不能像普通文件一样直接返回空页，否则 /resource/etl-manage
+            // 会看不到数据库中已有的 ETL 作业。
+            if (pagingResourceItemRequest.getResourceType() == ResourceType.ETL) {
+                Tenant tenant = tenantDao.queryOptionalById(
+                        pagingResourceItemRequest.getLoginUser().getTenantId())
+                        .orElseThrow(() -> new ServiceException(Status.TENANT_NOT_EXIST,
+                                pagingResourceItemRequest.getLoginUser().getTenantId()));
+                resourceAbsolutePaths = java.util.Collections.singletonList(
+                        storageOperator.getStorageBaseDirectory(tenant.getTenantCode(), ResourceType.ETL));
+            } else {
+                return new PageInfo<>(pagingResourceItemRequest.getPageNo(), pagingResourceItemRequest.getPageSize());
+            }
         }
 
         for (String resourceAbsolutePath : resourceAbsolutePaths) {
@@ -317,7 +329,8 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
 
         List<StorageEntity> storageEntities = resourceAbsolutePaths.stream()
                 .flatMap(resourceAbsolutePath -> storageOperator.listStorageEntity(resourceAbsolutePath).stream())
-                .filter(entity -> pagingResourceItemRequest.getResourceType() != ResourceType.ETL || entity.isDirectory())
+                .filter(entity -> pagingResourceItemRequest.getResourceType() != ResourceType.ETL
+                        || entity.isDirectory())
                 .collect(Collectors.toList());
 
         List<ResourceItemVO> databaseItems = new ArrayList<>();
@@ -340,11 +353,47 @@ public class ResourcesServiceImpl extends BaseServiceImpl implements ResourcesSe
         }
 
         // ETL 搜索结果只来自数据库，避免把文件资源目录混入 ETL 作业结果。
-        List<ResourceItemVO> allItems = (pagingResourceItemRequest.getResourceType() == ResourceType.ETL && !keyword.isEmpty())
-                ? new ArrayList<>(databaseItems)
-                : storageEntities.stream().map(ResourceItemVO::new).collect(Collectors.toList());
+        List<ResourceItemVO> allItems =
+                (pagingResourceItemRequest.getResourceType() == ResourceType.ETL && !keyword.isEmpty())
+                        ? new ArrayList<>(databaseItems)
+                        : storageEntities.stream().map(ResourceItemVO::new).collect(Collectors.toList());
         if (!(pagingResourceItemRequest.getResourceType() == ResourceType.ETL && !keyword.isEmpty())) {
             allItems.addAll(databaseItems);
+        }
+        if (pagingResourceItemRequest.getResourceType() == ResourceType.ETL && keyword.isEmpty()) {
+            // ETL 作业只保存在数据库中，目录可能没有对应的物理文件夹。
+            // 从完整路径构建当前层级的虚拟目录，避免根列表看不到 demo1/demo2 等目录。
+            List<DatabaseEtlContentService.ContentRecord> etlRecords = databaseEtlContentService.listAll();
+            for (String resourceAbsolutePath : resourceAbsolutePaths) {
+                String prefix = resourceAbsolutePath.endsWith("/")
+                        ? resourceAbsolutePath
+                        : resourceAbsolutePath + "/";
+                for (DatabaseEtlContentService.ContentRecord record : etlRecords) {
+                    String fullName = record.getFullName();
+                    if (!fullName.startsWith(prefix)) {
+                        continue;
+                    }
+                    String relativePath = fullName.substring(prefix.length());
+                    int separatorIndex = relativePath.indexOf('/');
+                    if (separatorIndex <= 0) {
+                        continue;
+                    }
+
+                    String directoryName = relativePath.substring(0, separatorIndex);
+                    String directoryPath = prefix + directoryName;
+                    boolean directoryAlreadyListed = allItems.stream()
+                            .anyMatch(item -> directoryPath.equals(item.getFullName()));
+                    if (!directoryAlreadyListed) {
+                        ResourceItemVO directory = new ResourceItemVO();
+                        directory.setAlias(directoryName);
+                        directory.setFileName(directoryName);
+                        directory.setFullName(directoryPath);
+                        directory.setDirectory(true);
+                        directory.setType(ResourceType.ETL);
+                        allItems.add(directory);
+                    }
+                }
+            }
         }
         List<ResourceItemVO> matchedItems = allItems.stream()
                 .filter(item -> keyword.isEmpty()

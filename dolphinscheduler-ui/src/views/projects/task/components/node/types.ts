@@ -266,6 +266,23 @@ interface ITaskParams {
   etlParameters?: string
   etlContent?: string
   datasourceIds?: number[]
+  executionMode?: 'LOCAL' | 'CLUSTER'
+  localJvmXms?: string
+  localJvmXmx?: string
+  localJvmXss?: string
+  runtimeMode?: 'BATCH' | 'STREAM'
+  clusterType?: 'STANDALONE' | 'YARN' | 'KUBERNETES'
+  jobManagerAddress?: string
+  jobManagerRestPort?: number
+  jobManagerCpu?: number
+  jobManagerMemory?: string
+  taskManagerCpu?: number
+  taskManagerMemory?: string
+  taskManagerCount?: number
+  taskManagerSlots?: number
+  checkpointEnabled?: boolean
+  checkpointInterval?: number
+  checkpointDir?: string
   resourceList?: ISourceItem[]
   mainJar?: ISourceItem
   localParams?: ILocalParam[]
@@ -276,8 +293,6 @@ interface ITaskParams {
   initScript?: string
   programType?: string
   flinkVersion?: string
-  jobManagerMemory?: string
-  taskManagerMemory?: string
   slot?: number
   taskManager?: number
   parallelism?: number

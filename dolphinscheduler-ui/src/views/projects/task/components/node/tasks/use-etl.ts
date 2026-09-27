@@ -4,7 +4,7 @@
  * this work for additional information regarding copyright ownership.
  */
 
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { queryResourceList, viewEtlContent } from '@/service/modules/resources'
 import * as Fields from '../fields/index'
 import type { IJsonItem, INodeData, ITaskData } from '../types'
@@ -41,8 +41,37 @@ export function useEtl({
     etlContent: '',
     datasourceIds: [] as number[],
     etlVersion: 'LATEST',
-    etlParameters: ''
+    etlParameters: '',
+    executionMode: 'LOCAL',
+    localJvmXms: '512m',
+    localJvmXmx: '2g',
+    localJvmXss: '1m',
+    runtimeMode: 'BATCH',
+    clusterType: 'STANDALONE',
+    jobManagerAddress: 'localhost',
+    jobManagerRestPort: 8081,
+    jobManagerCpu: 1,
+    jobManagerMemory: '1g',
+    taskManagerCpu: 2,
+    taskManagerMemory: '2g',
+    taskManagerCount: 1,
+    taskManagerSlots: 2,
+    parallelism: 2,
+    checkpointEnabled: false,
+    checkpointInterval: 60000,
+    checkpointDir: ''
   } as INodeData)
+
+  const localSpan = computed(() => model.executionMode === 'LOCAL' ? 12 : 0)
+  const clusterSpan = computed(() => model.executionMode === 'CLUSTER' ? 12 : 0)
+  const clusterFullSpan = computed(() => model.executionMode === 'CLUSTER' ? 24 : 0)
+  const checkpointSpan = computed(() =>
+    model.executionMode === 'CLUSTER' && model.checkpointEnabled ? 12 : 0
+  )
+
+  watch(() => model.executionMode, (mode) => {
+    if (!mode) model.executionMode = 'LOCAL'
+  }, { immediate: true })
 
   const resourceOptions = ref<any[]>([])
   const resourceLoading = ref(false)
@@ -79,7 +108,7 @@ export function useEtl({
   // Resource Center. `immediate` also covers the edit-page initialization
   // path where etlResource is already populated before this composable runs.
   watch(() => model.etlResource, (resource) => {
-    void loadEtlContent(resource)
+    void loadEtlContent(resource || '')
   }, { immediate: true })
 
   onMounted(async () => {
@@ -210,6 +239,169 @@ export function useEtl({
         placeholder: '可选，例如：{"biz_date":"${today}"}'
       },
       value: (model as any).etlParameters
+    },
+    {
+      type: 'radio',
+      field: 'executionMode',
+      name: '执行方式',
+      span: 24,
+      options: [
+        { label: '本地执行', value: 'LOCAL' },
+        { label: 'Flink 集群执行', value: 'CLUSTER' }
+      ],
+      value: (model as any).executionMode
+    },
+    {
+      type: 'input',
+      field: 'localJvmXms',
+      name: '初始堆内存 (-Xms)',
+      span: localSpan,
+      props: { placeholder: '例如 512m' },
+      value: (model as any).localJvmXms
+    },
+    {
+      type: 'input',
+      field: 'localJvmXmx',
+      name: '最大堆内存 (-Xmx)',
+      span: localSpan,
+      props: { placeholder: '例如 2g' },
+      value: (model as any).localJvmXmx,
+      validate: memoryRule('最大堆内存')
+    },
+    {
+      type: 'input',
+      field: 'localJvmXss',
+      name: '线程栈内存 (-Xss)',
+      span: localSpan,
+      props: { placeholder: '例如 1m' },
+      value: (model as any).localJvmXss
+    },
+    {
+      type: 'input-number',
+      field: 'parallelism',
+      name: 'Flink 并行度',
+      span: 12,
+      props: { min: 1, placeholder: '例如 2' },
+      value: (model as any).parallelism,
+      validate: positiveNumberRule('并行度')
+    },
+    {
+      type: 'radio',
+      field: 'runtimeMode',
+      name: '执行模式',
+      span: localSpan,
+      options: [
+        { label: 'BATCH 批处理', value: 'BATCH' },
+        { label: 'STREAM 流处理', value: 'STREAM' }
+      ],
+      value: (model as any).runtimeMode
+    },
+    {
+      type: 'select',
+      field: 'clusterType',
+      name: '集群类型',
+      span: clusterSpan,
+      options: [
+        { label: 'Standalone', value: 'STANDALONE' },
+        { label: 'YARN', value: 'YARN' },
+        { label: 'Kubernetes', value: 'KUBERNETES' }
+      ],
+      value: (model as any).clusterType
+    },
+    {
+      type: 'input',
+      field: 'jobManagerAddress',
+      name: 'JobManager 地址',
+      span: clusterSpan,
+      props: { placeholder: '例如 flink-jobmanager' },
+      value: (model as any).jobManagerAddress
+    },
+    {
+      type: 'input-number',
+      field: 'jobManagerRestPort',
+      name: 'JobManager REST 端口',
+      span: clusterSpan,
+      props: { min: 1, max: 65535 },
+      value: (model as any).jobManagerRestPort,
+      validate: portRule('JobManager REST 端口')
+    },
+    {
+      type: 'input-number',
+      field: 'jobManagerCpu',
+      name: 'JobManager CPU 核数',
+      span: clusterSpan,
+      props: { min: 1 },
+      value: (model as any).jobManagerCpu,
+      validate: positiveNumberRule('JobManager CPU 核数')
+    },
+    {
+      type: 'input',
+      field: 'jobManagerMemory',
+      name: 'JobManager 内存',
+      span: clusterSpan,
+      props: { placeholder: '例如 1g' },
+      value: (model as any).jobManagerMemory,
+      validate: memoryRule('JobManager 内存')
+    },
+    {
+      type: 'input-number',
+      field: 'taskManagerCpu',
+      name: 'TaskManager CPU 核数',
+      span: clusterSpan,
+      props: { min: 1 },
+      value: (model as any).taskManagerCpu,
+      validate: positiveNumberRule('TaskManager CPU 核数')
+    },
+    {
+      type: 'input',
+      field: 'taskManagerMemory',
+      name: 'TaskManager 内存',
+      span: clusterSpan,
+      props: { placeholder: '例如 2g' },
+      value: (model as any).taskManagerMemory,
+      validate: memoryRule('TaskManager 内存')
+    },
+    {
+      type: 'input-number',
+      field: 'taskManagerCount',
+      name: 'TaskManager 数量',
+      span: clusterSpan,
+      props: { min: 1 },
+      value: (model as any).taskManagerCount,
+      validate: positiveNumberRule('TaskManager 数量')
+    },
+    {
+      type: 'input-number',
+      field: 'taskManagerSlots',
+      name: 'TaskManager Slots',
+      span: clusterSpan,
+      props: { min: 1 },
+      value: (model as any).taskManagerSlots,
+      validate: positiveNumberRule('TaskManager Slots')
+    },
+    {
+      type: 'switch',
+      field: 'checkpointEnabled',
+      name: '启用 Checkpoint',
+      span: clusterFullSpan,
+      value: (model as any).checkpointEnabled
+    },
+    {
+      type: 'input-number',
+      field: 'checkpointInterval',
+      name: 'Checkpoint 间隔 (毫秒)',
+      span: checkpointSpan,
+      props: { min: 1000 },
+      value: (model as any).checkpointInterval,
+      validate: positiveNumberRule('Checkpoint 间隔')
+    },
+    {
+      type: 'input',
+      field: 'checkpointDir',
+      name: 'Checkpoint 存储目录',
+      span: checkpointSpan,
+      props: { placeholder: '例如 hdfs:///flink/checkpoints/etl' },
+      value: (model as any).checkpointDir
     }
   ]
 
@@ -219,14 +411,7 @@ export function useEtl({
       ...Fields.useTaskDefinition({ projectCode, from, readonly, data, model }),
       Fields.useRunFlag(),
       Fields.useDescription(),
-      Fields.useTaskPriority(),
-      Fields.useWorkerGroup(projectCode),
-      Fields.useEnvironmentName(model, !data?.id),
-      ...Fields.useTaskGroup(model, projectCode),
       ...Fields.useFailed(),
-      ...Fields.useResourceLimit(),
-      Fields.useDelayTime(model),
-      ...Fields.useTimeoutAlarm(model),
       ...extra,
       Fields.usePreTasks()
     ] as IJsonItem[],
@@ -237,12 +422,43 @@ export function useEtl({
     if (!content) return []
     try {
       const parsed = JSON.parse(content.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t'))
-      const ids = (parsed.nodes || [])
+      const ids: number[] = (parsed.nodes || [])
         .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
         .filter((id: number) => Number.isInteger(id) && id > 0)
       return [...new Set(ids)]
     } catch {
       return []
+    }
+  }
+
+  function positiveNumberRule(label: string) {
+    return {
+      trigger: ['input', 'blur'],
+      validator: (_validate: any, value: number) => {
+        if (value == null || value < 1) return new Error(`${label}必须大于 0`)
+      }
+    }
+  }
+
+  function portRule(label: string) {
+    return {
+      trigger: ['input', 'blur'],
+      validator: (_validate: any, value: number) => {
+        if (value == null || value < 1 || value > 65535) {
+          return new Error(`${label}必须在 1-65535 范围内`)
+        }
+      }
+    }
+  }
+
+  function memoryRule(label: string) {
+    return {
+      trigger: ['input', 'blur'],
+      validator: (_validate: any, value: string) => {
+        if (value && !/^\d+(?:\.\d+)?\s*(?:k|m|g|t)$/i.test(value.trim())) {
+          return new Error(`${label}请输入类似 512m、2g 的值`)
+        }
+      }
     }
   }
 }

@@ -50,6 +50,7 @@ import type { Router } from 'vue-router'
 import Search from '@/components/input-search'
 import { ResourceType } from '@/views/resource/components/resource/types'
 import { useUserStore } from '@/store/user/user'
+import { queryBaseDir } from '@/service/modules/resources'
 
 const props = {
   resourceType: {
@@ -131,9 +132,25 @@ export default defineComponent({
     onUnmounted(() => {
       isDetailPageStore.$reset()
     })
-    onMounted(() => {
+    onMounted(async () => {
       handleDetailBackList()
       createColumns(variables)
+
+      // ETL 内容保存在数据库中。根路由没有 prefix 时，不能把空字符串
+      // 直接传给分页接口，否则后端无法定位 ETL 根目录，列表会显示为空。
+      // 先获取 ETL 根目录，再查询当前目录的直接子项。
+      if (props.resourceType === 'ETL' && !variables.fullName) {
+        try {
+          const etlBaseDir = await queryBaseDir({ type: 'ETL' })
+          if (etlBaseDir) {
+            variables.fullName = String(etlBaseDir).endsWith('/')
+              ? String(etlBaseDir)
+              : `${etlBaseDir}/`
+          }
+        } catch (error) {
+          console.warn('[resource] failed to resolve ETL base directory', error)
+        }
+      }
       fileStore.setCurrentDir(variables.fullName)
       breadListRef.value = fileStore.getCurrentDir
         .replace(/\/+$/g, '')
@@ -207,6 +224,9 @@ export default defineComponent({
       ? '新建 ETL 作业'
       : t('resource.file.create_file')
     const uploadBtnLabel = isEtl ? '上传 ETL 文件' : t('resource.file.upload_files')
+    const searchPlaceholder = isEtl
+      ? '搜索 ETL 作业名称或路径（数据库）'
+      : t('resource.file.enter_keyword_tips')
     const breadcrumbItems = isEtl
       ? this.breadListRef?.length
         ? [{ item: this.breadListRef[this.breadListRef.length - 1], index: this.breadListRef.length - 1 }]
@@ -236,7 +256,7 @@ export default defineComponent({
             </NButtonGroup>
             <NSpace>
               <Search
-                placeholder={t('resource.file.enter_keyword_tips')}
+                placeholder={searchPlaceholder}
                 v-model:value={this.searchRef}
                 onSearch={handleConditions}
               />

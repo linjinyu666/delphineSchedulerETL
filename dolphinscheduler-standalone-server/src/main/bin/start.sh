@@ -18,8 +18,12 @@
 set -eo pipefail
 
 BIN_DIR=$(dirname $(readlink -f "$0"))
-DOLPHINSCHEDULER_HOME=$(cd ${BIN_DIR}/../..;pwd)
 STANDALONE_HOME=$(cd ${BIN_DIR}/..;pwd)
+# The standalone distribution is self-contained.  Do not resolve the
+# multi-service distribution one level above it: that layout is only used by
+# dolphinscheduler-dist and made the local standalone launcher silently miss
+# the API/Master/Worker/Alert jars.
+DOLPHINSCHEDULER_HOME=$(cd ${STANDALONE_HOME}/../../..;pwd)
 
 export DATABASE=${DATABASE:-h2}
 source "$STANDALONE_HOME/conf/dolphinscheduler_env.sh"
@@ -46,15 +50,17 @@ echo "JAVA_HOME=${JAVA_HOME}"
 echo "JAVA_OPTS=${JAVA_OPTS}"
 
 MODULES_PATH=(
-api-server
-master-server
-worker-server
-alert-server
+  "$DOLPHINSCHEDULER_HOME/dolphinscheduler-api/target/api-server"
+  "$DOLPHINSCHEDULER_HOME/dolphinscheduler-master/target/master-server"
+  "$DOLPHINSCHEDULER_HOME/dolphinscheduler-worker/target/worker-server"
+  "$DOLPHINSCHEDULER_HOME/dolphinscheduler-alert/dolphinscheduler-alert-server/target/alert-server"
 )
 
 CP=""
-for module in ${MODULES_PATH[@]}; do
-  CP=$CP:"$DOLPHINSCHEDULER_HOME/$module/libs/*"
+for module in "${MODULES_PATH[@]}"; do
+  if [ -d "$module/libs" ]; then
+    CP=$CP:"$module/libs/*"
+  fi
 done
 
 PLUGINS_PATH=(
@@ -75,5 +81,5 @@ for jar in $(find $STANDALONE_HOME/libs/* -name "*.jar"); do
 done
 
 $JAVA_HOME/bin/java $JAVA_OPTS \
-  -cp "$STANDALONE_HOME/conf""$CP" \
+  -cp "$STANDALONE_HOME/conf:$STANDALONE_HOME/classes$CP" \
   org.apache.dolphinscheduler.StandaloneServer

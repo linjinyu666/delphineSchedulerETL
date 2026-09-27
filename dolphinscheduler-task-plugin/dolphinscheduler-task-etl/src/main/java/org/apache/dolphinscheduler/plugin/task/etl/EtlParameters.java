@@ -77,6 +77,25 @@ public class EtlParameters extends AbstractParameters {
     /** Datasource ids selected by the ETL designer; resolved by Master at runtime. */
     private List<Integer> datasourceIds;
 
+    /** ETL execution resources configured in the workflow task form. */
+    private String executionMode = "LOCAL";
+    private String localJvmXms = "512m";
+    private String localJvmXmx = "2g";
+    private String localJvmXss = "1m";
+    private String runtimeMode = "BATCH";
+    private String clusterType = "STANDALONE";
+    private String jobManagerAddress = "localhost";
+    private int jobManagerRestPort = 8081;
+    private int jobManagerCpu = 1;
+    private String jobManagerMemory = "1g";
+    private int taskManagerCpu = 2;
+    private String taskManagerMemory = "2g";
+    private int taskManagerCount = 1;
+    private int taskManagerSlots = 2;
+    private boolean checkpointEnabled;
+    private long checkpointInterval = 60000L;
+    private String checkpointDir;
+
     /**
      * Flink 并行度，默认 2
      */
@@ -232,5 +251,141 @@ public class EtlParameters extends AbstractParameters {
 
     public void setDatasourceIds(List<Integer> datasourceIds) {
         this.datasourceIds = datasourceIds;
+    }
+
+    public String getExecutionMode() {
+        return executionMode;
+    }
+
+    public void setExecutionMode(String executionMode) {
+        this.executionMode = executionMode;
+    }
+
+    public String getLocalJvmXms() {
+        return localJvmXms;
+    }
+
+    public void setLocalJvmXms(String localJvmXms) {
+        this.localJvmXms = localJvmXms;
+    }
+
+    public String getLocalJvmXmx() {
+        return localJvmXmx;
+    }
+
+    public void setLocalJvmXmx(String localJvmXmx) {
+        this.localJvmXmx = localJvmXmx;
+    }
+
+    public String getLocalJvmXss() {
+        return localJvmXss;
+    }
+
+    public void setLocalJvmXss(String localJvmXss) {
+        this.localJvmXss = localJvmXss;
+    }
+
+    public String getRuntimeMode() {
+        return runtimeMode;
+    }
+
+    public void setRuntimeMode(String runtimeMode) {
+        this.runtimeMode = runtimeMode;
+    }
+
+    public String getClusterType() {
+        return clusterType;
+    }
+
+    public void setClusterType(String clusterType) {
+        this.clusterType = clusterType;
+    }
+
+    public String getJobManagerAddress() {
+        return jobManagerAddress;
+    }
+
+    public void setJobManagerAddress(String jobManagerAddress) {
+        this.jobManagerAddress = jobManagerAddress;
+    }
+
+    public int getJobManagerRestPort() {
+        return jobManagerRestPort;
+    }
+
+    public void setJobManagerRestPort(int jobManagerRestPort) {
+        this.jobManagerRestPort = jobManagerRestPort;
+    }
+
+    public int getJobManagerCpu() {
+        return jobManagerCpu;
+    }
+
+    public void setJobManagerCpu(int jobManagerCpu) {
+        this.jobManagerCpu = jobManagerCpu;
+    }
+
+    public String getJobManagerMemory() {
+        return jobManagerMemory;
+    }
+
+    public void setJobManagerMemory(String jobManagerMemory) {
+        this.jobManagerMemory = jobManagerMemory;
+    }
+
+    public int getTaskManagerCpu() {
+        return taskManagerCpu;
+    }
+
+    public void setTaskManagerCpu(int taskManagerCpu) {
+        this.taskManagerCpu = taskManagerCpu;
+    }
+
+    public String getTaskManagerMemory() {
+        return taskManagerMemory;
+    }
+
+    public void setTaskManagerMemory(String taskManagerMemory) {
+        this.taskManagerMemory = taskManagerMemory;
+    }
+
+    public int getTaskManagerCount() {
+        return taskManagerCount;
+    }
+
+    public void setTaskManagerCount(int taskManagerCount) {
+        this.taskManagerCount = taskManagerCount;
+    }
+
+    public int getTaskManagerSlots() {
+        return taskManagerSlots;
+    }
+
+    public void setTaskManagerSlots(int taskManagerSlots) {
+        this.taskManagerSlots = taskManagerSlots;
+    }
+
+    public boolean isCheckpointEnabled() {
+        return checkpointEnabled;
+    }
+
+    public void setCheckpointEnabled(boolean checkpointEnabled) {
+        this.checkpointEnabled = checkpointEnabled;
+    }
+
+    public long getCheckpointInterval() {
+        return checkpointInterval;
+    }
+
+    public void setCheckpointInterval(long checkpointInterval) {
+        this.checkpointInterval = checkpointInterval;
+    }
+
+    public String getCheckpointDir() {
+        return checkpointDir;
+    }
+
+    public void setCheckpointDir(String checkpointDir) {
+        this.checkpointDir = checkpointDir;
     }
 }

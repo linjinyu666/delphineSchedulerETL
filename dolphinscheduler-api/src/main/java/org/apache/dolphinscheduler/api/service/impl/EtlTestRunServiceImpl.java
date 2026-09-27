@@ -57,7 +57,11 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
 
     private static final String DEFAULT_MAIN_CLASS = "com.example.flink.pipeline.ConfigurableJdbcEtl";
     private static final String DEFAULT_JVM_ARGS =
-            "--add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED";
+            "--add-opens java.base/java.util=ALL-UNNAMED "
+                    + "--add-opens java.base/java.lang=ALL-UNNAMED "
+                    // ETL fat jar 可能自带 Log4j 的 SLF4J provider，而 standalone lib 同时有 Logback。
+                    // 显式指定 provider，避免不同 classpath 顺序导致初始化失败。
+                    + "-Dslf4j.provider=ch.qos.logback.classic.spi.LogbackServiceProvider";
     private static final String DEFAULT_JAR = "flink-learning-1.0.0-SNAPSHOT.jar";
     private static final Path PROPS_DIR = Paths.get("/tmp/ds-etl-test");
 
@@ -207,7 +211,13 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
             for (int i = 0; i < sinks.size(); i++) {
                 sql = sql.replace("${SINK_ALIAS_" + (i + 1) + "}", stringOf(sinks.get(i).get("alias")));
             }
-            sql = sql.replaceAll("\\s+", " ").trim();
+            // Properties are written as a single logical line. If a SQL line
+            // comment is flattened before being sent to flink-etl, the next
+            // statement becomes part of the comment:
+            // -- comment\nSELECT ... -> -- comment SELECT ...
+            // Normalize line comments to block comments before collapsing
+            // whitespace so custom SQL comments remain valid and executable.
+            sql = normalizeSqlComments(sql).replaceAll("\\s+", " ").trim();
             w.write("sql=" + sql + "\n\n");
 
             w.write("parallelism=" + req.getParallelism() + "\n");
@@ -323,12 +333,12 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         }
         // 如果 owner (用户选的 schema/库) 跟 datasource 默认 database 不同:
         // - 跨 MySQL/PG/SQLServer 库: Flink JDBC 会把 URL 里的 db 当作默认 catalog 前缀
-        //   → 跨库时把 URL 的 db 换成 owner, Flink 拼的就是 owner.tbl (正确)
+        // → 跨库时把 URL 的 db 换成 owner, Flink 拼的就是 owner.tbl (正确)
         // - 对 oracle / dameng: database 是 service name / 库名(不是 schema),
-        //   owner 是用户(schema), 两者概念不同, 不能直接替换 URL 末段
-        //   (oracle: /ORCLCDB 是 service,/C##APP_USER 是错的服务名 → ORA-12514)
-        //   (dameng: driver 会调 setSchema(URL末段), DAMENG 不是真 schema → 无效模式名)
-        //   → oracle / dameng 不做跨库替换,table 直接拼成 owner.table
+        // owner 是用户(schema), 两者概念不同, 不能直接替换 URL 末段
+        // (oracle: /ORCLCDB 是 service,/C##APP_USER 是错的服务名 → ORA-12514)
+        // (dameng: driver 会调 setSchema(URL末段), DAMENG 不是真 schema → 无效模式名)
+        // → oracle / dameng 不做跨库替换,table 直接拼成 owner.table
         String ownerStr = stringOf(node.get("owner"));
         boolean isCatalogDb = "mysql".equals(type) || "postgresql".equals(type) || "postgres".equals(type)
                 || "pg".equals(type) || "sqlserver".equals(type);
@@ -395,6 +405,57 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         return fieldsObj instanceof List ? base + "|" + fields : base + "|" + stringOf(node.get("mode"));
     }
 
+    /**
+     * Convert -- and # comments outside quoted SQL literals to block comments.
+     * The ETL properties format stores SQL on one line, so preserving a line
+     * comment verbatim would comment out the remainder of the generated job.
+     */
+    private static String normalizeSqlComments(String sql) {
+        if (sql == null || sql.isEmpty()) {
+            return "";
+        }
+        StringBuilder normalized = new StringBuilder(sql.length());
+        boolean singleQuoted = false;
+        boolean doubleQuoted = false;
+        boolean backtickQuoted = false;
+        for (int i = 0; i < sql.length(); i++) {
+            char ch = sql.charAt(i);
+            if (ch == '\'' && !doubleQuoted && !backtickQuoted) {
+                normalized.append(ch);
+                if (singleQuoted && i + 1 < sql.length() && sql.charAt(i + 1) == '\'') {
+                    normalized.append(sql.charAt(++i));
+                } else {
+                    singleQuoted = !singleQuoted;
+                }
+                continue;
+            }
+            if (ch == '"' && !singleQuoted && !backtickQuoted) {
+                doubleQuoted = !doubleQuoted;
+                normalized.append(ch);
+                continue;
+            }
+            if (ch == '`' && !singleQuoted && !doubleQuoted) {
+                backtickQuoted = !backtickQuoted;
+                normalized.append(ch);
+                continue;
+            }
+            if (!singleQuoted && !doubleQuoted && !backtickQuoted
+                    && (ch == '#' || (ch == '-' && i + 1 < sql.length() && sql.charAt(i + 1) == '-'))) {
+                if (ch == '-') {
+                    i++;
+                }
+                StringBuilder comment = new StringBuilder();
+                while (i + 1 < sql.length() && sql.charAt(i + 1) != '\n' && sql.charAt(i + 1) != '\r') {
+                    comment.append(sql.charAt(++i));
+                }
+                normalized.append("/*").append(comment.toString().replace("*/", "* /")).append("*/ ");
+                continue;
+            }
+            normalized.append(ch);
+        }
+        return normalized.toString();
+    }
+
     @SuppressWarnings("unchecked")
     private static Map<String, Object> castMap(Object o) {
         return o instanceof Map ? (Map<String, Object>) o : null;
@@ -434,7 +495,8 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         if (req.getDatasources() != null) {
             for (Map<String, Object> ds : req.getDatasources()) {
                 String id = stringOf(ds.get("id"));
-                if (!id.isEmpty()) dsIndex.put(id, ds);
+                if (!id.isEmpty())
+                    dsIndex.put(id, ds);
             }
         }
         if (req.getDatasources() == null) {
@@ -444,8 +506,12 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
 
         // 收集所有节点用到的 dsId + 节点本身 (用来补 alias 反查)
         Map<String, Map<String, Object>> allNodes = new LinkedHashMap<>();
-        if (req.getSources() != null) req.getSources().forEach(n -> allNodes.put(stringOf(n.get("alias")) + "|" + stringOf(n.get("datasourceId")), n));
-        if (req.getSinks()   != null) req.getSinks().forEach(n -> allNodes.put(stringOf(n.get("alias")) + "|" + stringOf(n.get("datasourceId")), n));
+        if (req.getSources() != null)
+            req.getSources()
+                    .forEach(n -> allNodes.put(stringOf(n.get("alias")) + "|" + stringOf(n.get("datasourceId")), n));
+        if (req.getSinks() != null)
+            req.getSinks()
+                    .forEach(n -> allNodes.put(stringOf(n.get("alias")) + "|" + stringOf(n.get("datasourceId")), n));
 
         // 把所有缺失的 dsId 收集起来 (保持插入顺序)
         // 注意: 节点 datasourceId 为空但自带 host/port/database/type 完整时, 也要走兜底反查
@@ -462,9 +528,11 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                 }
                 continue;
             }
-            if (!dsIndex.containsKey(dsId)) missing.add(dsId);
+            if (!dsIndex.containsKey(dsId))
+                missing.add(dsId);
         }
-        if (missing.isEmpty()) return;
+        if (missing.isEmpty())
+            return;
 
         // (1) 按节点 datasourceAlias 反查 req.datasources 中已存在的条目
         // 先建一个 alias → ds 的索引
@@ -472,27 +540,33 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         for (Map<String, Object> ds : dsIndex.values()) {
             String nm = stringOf(ds.get("name"));
             String als = stringOf(ds.get("aliasName"));
-            if (!nm.isEmpty()) aliasIdx.put(nm, ds);
-            if (!als.isEmpty()) aliasIdx.put(als, ds);
+            if (!nm.isEmpty())
+                aliasIdx.put(nm, ds);
+            if (!als.isEmpty())
+                aliasIdx.put(als, ds);
         }
         // 按节点字段 host:port:database 也建一份 (兼容 alias 不一致但 connection 等价的场景)
         Map<String, Map<String, Object>> connIdx = new HashMap<>();
         for (Map<String, Object> ds : dsIndex.values()) {
             String key = connKey(ds);
-            if (!key.isEmpty()) connIdx.put(key, ds);
+            if (!key.isEmpty())
+                connIdx.put(key, ds);
         }
 
         // (2) 数据库反查 (需要一个 id->ds 的映射给丢的 dsId 用)
         Map<String, Map<String, Object>> dbDsById = new HashMap<>();
         for (String dsId : missing) {
-            if (dataSourceMapper == null) break;
+            if (dataSourceMapper == null)
+                break;
             try {
                 Integer parsed = Integer.parseInt(dsId);
                 org.apache.dolphinscheduler.dao.entity.DataSource ent = dataSourceMapper.selectById(parsed);
-                if (ent == null) continue;
+                if (ent == null)
+                    continue;
                 Map<String, Object> cp = ent.getConnectionParams() == null
                         ? new HashMap<>()
-                        : new com.fasterxml.jackson.databind.ObjectMapper().readValue(ent.getConnectionParams(), Map.class);
+                        : new com.fasterxml.jackson.databind.ObjectMapper().readValue(ent.getConnectionParams(),
+                                Map.class);
                 Map<String, Object> dbDs = new LinkedHashMap<>();
                 dbDs.put("id", String.valueOf(ent.getId()));
                 dbDs.put("name", ent.getName() == null ? "" : ent.getName());
@@ -500,8 +574,10 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                 dbDs.put("type", ent.getType() == null ? "" : ent.getType().name().toLowerCase());
                 dbDs.put("host", stringOf(cp.get("host")));
                 Object portObj = cp.get("port");
-                dbDs.put("port", portObj instanceof Number ? ((Number) portObj).intValue() : (portObj == null ? 0 : Integer.parseInt(portObj.toString())));
-                dbDs.put("database", stringOf(cp.get("database") == null ? cp.get("databaseName") : cp.get("database")));
+                dbDs.put("port", portObj instanceof Number ? ((Number) portObj).intValue()
+                        : (portObj == null ? 0 : Integer.parseInt(portObj.toString())));
+                dbDs.put("database",
+                        stringOf(cp.get("database") == null ? cp.get("databaseName") : cp.get("database")));
                 dbDs.put("userName", stringOf(cp.get("user") == null ? cp.get("userName") : cp.get("user")));
                 dbDs.put("username", dbDs.get("userName"));
                 dbDs.put("password", stringOf(cp.get("password")));
@@ -518,7 +594,8 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
             // datasourceId 为空 (compare/join 等虚拟节点) 但节点自带 host/port/database/type 时, 也走兜底反查
             String nodeAliasForLog = stringOf(node.get("alias"));
             boolean virtualId = dsId.isEmpty();
-            if (!virtualId && dsIndex.containsKey(dsId)) continue;
+            if (!virtualId && dsIndex.containsKey(dsId))
+                continue;
 
             Map<String, Object> matched = null;
 
@@ -548,9 +625,11 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                 fallback.put("type", stringOf(node.get("type")));
                 fallback.put("host", stringOf(node.get("host")));
                 Object portObj = node.get("port");
-                fallback.put("port", portObj instanceof Number ? ((Number) portObj).intValue() : (portObj == null ? 0 : Integer.parseInt(portObj.toString())));
+                fallback.put("port", portObj instanceof Number ? ((Number) portObj).intValue()
+                        : (portObj == null ? 0 : Integer.parseInt(portObj.toString())));
                 fallback.put("database", stringOf(node.get("database")));
-                fallback.put("userName", stringOf(node.get("userName") == null ? node.get("username") : node.get("userName")));
+                fallback.put("userName",
+                        stringOf(node.get("userName") == null ? node.get("username") : node.get("userName")));
                 fallback.put("username", fallback.get("userName"));
                 fallback.put("password", stringOf(node.get("password")));
                 String host = stringOf(fallback.get("host"));
@@ -566,14 +645,16 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                 if (matchedId.startsWith("@")) {
                     matchedId = matchedId.substring(1);
                 }
-                if (matchedId.isEmpty()) matchedId = dsId;
+                if (matchedId.isEmpty())
+                    matchedId = dsId;
                 // 用真实 ds 的 id 替换节点的引用 id, 保证 dsIndex 命中
                 node.put("datasourceId", matchedId);
                 if (!dsIndex.containsKey(matchedId)) {
                     dsIndex.put(matchedId, matched);
                     req.getDatasources().add(matched);
                 }
-                log.info("[etl-test-run] datasourceId={} 缺失已补全: alias={} type={}", virtualId ? "(empty)" : dsId, nodeAlias, matched.get("type"));
+                log.info("[etl-test-run] datasourceId={} 缺失已补全: alias={} type={}", virtualId ? "(empty)" : dsId,
+                        nodeAlias, matched.get("type"));
             } else {
                 throw new IllegalArgumentException(
                         "Source/Sink [" + nodeAliasForLog + "] 引用的 datasourceId=" + (dsId.isEmpty() ? "(empty)" : dsId)
@@ -584,13 +665,15 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
     }
 
     private static String connKey(Map<String, Object> ds) {
-        if (ds == null) return "";
+        if (ds == null)
+            return "";
         String type = stringOf(ds.get("type"));
         String host = stringOf(ds.get("host"));
         Object portObj = ds.get("port");
         String port = portObj == null ? "" : portObj.toString();
         String db = stringOf(ds.get("database"));
-        if (type.isEmpty() || host.isEmpty() || port.isEmpty()) return "";
+        if (type.isEmpty() || host.isEmpty() || port.isEmpty())
+            return "";
         return (type + "|" + host + "|" + port + "|" + db).toLowerCase();
     }
 
@@ -705,7 +788,7 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
     private static String[] buildCmd(String javaCmd, String jarPath, String propsPath) {
         // 把 fat jar 同目录下其它所有 .jar 也加到 -cp
         // （flink-learning 是 shade fat jar，但 dm/oracle/kafka 等驱动通常不打进 fat jar，
-        //   让 EtlTestRunService 自动扫描 lib/ 目录，加进 user code classloader）
+        // 让 EtlTestRunService 自动扫描 lib/ 目录，加进 user code classloader）
         String cp = jarPath;
         File jarFile = new File(jarPath);
         File libDir = jarFile.getParentFile();
@@ -770,25 +853,40 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
     }
 
     /**
-     * jar 路径解析：$DS_STANDALONE_LIB 或 dolphinScheduler-standalone-server/target/standalone-server/lib
+     * jar 路径解析：$DS_STANDALONE_LIB 或 standalone-server/flink-etl/lib。
+     * flink-etl 是独立运行时，不能与 DolphinScheduler 的 task plugin lib 混用。
      */
     private File resolveJar() {
         String env = System.getenv("DS_STANDALONE_LIB");
         if (env != null && !env.isEmpty()) {
-            File f = new File(env, DEFAULT_JAR);
-            if (f.isFile())
-                return f;
+            File envDir = new File(env);
+            File[] envCandidates = {
+                    new File(envDir, DEFAULT_JAR),
+                    new File(envDir, "flink-etl/lib/" + DEFAULT_JAR),
+                    new File(envDir, "lib/" + DEFAULT_JAR)
+            };
+            for (File candidate : envCandidates) {
+                if (candidate.isFile()) {
+                    return candidate;
+                }
+            }
         }
         File cwd = new File(System.getProperty("user.dir"));
-        File dev = new File(cwd, "lib/" + DEFAULT_JAR);
-        if (dev.isFile())
-            return dev;
-        // dev fallback: 源码工程目录（run.sh 启动时 cwd 是 standalone-server/target/standalone-server/）
-        File src = new File(
-                "/Users/linjinyu/Documents/code/trae/delphineSchedulerETL/apache-dolphinscheduler-3.4.2-src/dolphinscheduler-standalone-server/target/standalone-server/lib/"
-                        + DEFAULT_JAR);
-        if (src.isFile())
-            return src;
+        File[] candidates = {
+                new File(cwd, "flink-etl/lib/" + DEFAULT_JAR),
+                new File(cwd, "lib/" + DEFAULT_JAR),
+                // 兼容 DS_STANDALONE_LIB 指向 standalone-server 的上级目录。
+                new File(cwd, "standalone-server/flink-etl/lib/" + DEFAULT_JAR),
+                // dev fallback: 源码工程目录（run.sh 的 cwd 通常是 standalone-server/）。
+                new File(
+                        "/Users/linjinyu/Documents/code/trae/delphineSchedulerETL/apache-dolphinscheduler-3.4.2-src/dolphinscheduler-standalone-server/target/standalone-server/flink-etl/lib/"
+                                + DEFAULT_JAR)
+        };
+        for (File candidate : candidates) {
+            if (candidate.isFile()) {
+                return candidate;
+            }
+        }
         return null;
     }
 }

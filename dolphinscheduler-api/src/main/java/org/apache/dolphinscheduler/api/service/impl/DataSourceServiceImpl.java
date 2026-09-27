@@ -503,7 +503,8 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             } catch (SQLException primaryKeyError) {
                 // Some JDBC drivers do not implement getPrimaryKeys. Keep returning
                 // the column list in that case; the UI will simply have no locked PK.
-                log.warn("[datasource] getPrimaryKeys failed for id={} type={} table={}, continue without PK metadata, cause={}",
+                log.warn(
+                        "[datasource] getPrimaryKeys failed for id={} type={} table={}, continue without PK metadata, cause={}",
                         dataSource.getId(), dataSource.getType(), tableName, primaryKeyError.getMessage());
             } finally {
                 closeResult(primaryKeyRs);
@@ -561,7 +562,8 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             }
         } catch (Exception e) {
             // 网络通信异常 (例如 dm.jdbc.driver.DMException) 等, 不再阻断 ETL designer 流程
-            log.warn("[datasource] getColumns failed for id={} type={} db={} table={}, cause={}, return empty column list",
+            log.warn(
+                    "[datasource] getColumns failed for id={} type={} db={} table={}, cause={}, return empty column list",
                     dataSource.getId(), dataSource.getType(), database, tableName, e.getMessage());
             return Collections.emptyList();
         } finally {

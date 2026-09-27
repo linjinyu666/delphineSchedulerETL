@@ -1739,7 +1739,16 @@ export default defineComponent({
       const constraint = detail?.[2] ? `（约束：${detail[2]}）` : ''
       const fields = text.match(/冲突字段（主键）:\s*([^\n]+)/i)?.[1]?.trim()
       const fieldHint = fields ? `\n冲突字段：${fields}` : ''
-      return `⚠️ 写入失败：${target} 存在主键或唯一键冲突${constraint}。${fieldHint}\n当前写入模式为 INSERT，冲突记录不会覆盖；如需覆盖，请将写入模式改为 REPLACE INTO。\n\n原始日志：\n${text}`
+      const configuredModes = lastBuiltSinks.value
+        .map((sink: any) => String(sink?.mode || '').toLowerCase())
+        .filter(Boolean)
+      const replaceConfigured = configuredModes.some((mode: string) =>
+        ['replace_into', 'replaceinto', 'replace', 'upsert'].includes(mode)
+      ) || /mode\s*=\s*upsert|REPLACE\s+INTO/i.test(text)
+      const modeHint = replaceConfigured
+        ? '当前写入模式为 REPLACE INTO，但目标数据库/执行器仍返回了冲突，请检查目标表主键或唯一键配置。'
+        : '当前写入模式为 INSERT，冲突记录不会覆盖；如需覆盖，请将写入模式改为 REPLACE INTO。'
+      return `⚠️ 写入失败：${target} 存在主键或唯一键冲突${constraint}。${fieldHint}\n${modeHint}\n\n原始日志：\n${text}`
     }
 
     // 测试运行：调 flink-etl 的 /api/pipelines/run

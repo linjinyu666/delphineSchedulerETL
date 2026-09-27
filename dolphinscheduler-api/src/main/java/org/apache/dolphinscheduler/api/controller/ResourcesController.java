@@ -324,8 +324,8 @@ public class ResourcesController extends BaseController {
     @GetMapping(value = "/etl-content")
     @ApiException(VIEW_RESOURCE_FILE_ON_LINE_ERROR)
     public Result<FetchFileContentResponse> viewEtlContent(
-            @Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
-            @RequestParam(value = "fullName") String resourceAbsoluteFilePath) {
+                                                           @Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                                           @RequestParam(value = "fullName") String resourceAbsoluteFilePath) {
         FetchFileContentRequest request = FetchFileContentRequest.builder()
                 .loginUser(loginUser)
                 .resourceFileAbsolutePath(resourceAbsoluteFilePath)
