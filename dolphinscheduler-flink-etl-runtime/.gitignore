@@ -1,0 +1,46 @@
+# ===== 构建产物 =====
+target/
+**/target/
+*.class
+*.jar
+*.war
+dependency-reduced-pom.xml
+
+# ===== 发行包 =====
+*.zip
+*.tar.gz
+
+# ===== 日志/错误 =====
+*.log
+hs_err_pid*.log
+
+# ===== IDE =====
+.idea/
+*.iml
+.vscode/
+.DS_Store
+**/.DS_Store
+
+# ===== 临时文件 =====
+*.tmp
+*.bak
+*.swp
+*~
+Thumbs.db
+
+# ===== Node/Vue =====
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.npm
+.eslintcache
+
+# ===== 数据/中间产物 =====
+data/
+input/
+org/
+
+# ===== Flink ETL 本地属性（避免把密码推上去） =====
+**/application-local.yml
+**/application-local.properties
