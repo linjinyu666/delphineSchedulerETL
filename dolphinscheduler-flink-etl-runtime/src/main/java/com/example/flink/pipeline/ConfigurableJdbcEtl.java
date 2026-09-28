@@ -480,7 +480,7 @@ public class ConfigurableJdbcEtl {
                 sb.append("* VARCHAR(255)");
             }
         } catch (Exception e) {
-            System.out.println("[WARN] 自动读字段失败: " + e.getMessage());
+            System.out.println("[WARN] 自动读字段失败: " + LogSanitizer.redactCredentials(e.getMessage()));
             return "* VARCHAR(255)";  // 兜底
         }
         return sb.toString();
@@ -563,7 +563,8 @@ public class ConfigurableJdbcEtl {
             // 后端 PipelineService.formatDbConfig 永远生成 9 列：
             //   url|user|pwd|driver|table|alias|owner|customDdl|fieldsSpec
             if (parts.length < 9) {
-                throw new IllegalArgumentException("source 配置格式错误（期望 9 列，实际 " + parts.length + " 列）: " + src);
+                // Do not include the pipe-delimited config: it contains the database password.
+                throw new IllegalArgumentException("source 配置格式错误（期望 9 列，实际 " + parts.length + " 列）");
             }
             String url          = parts[0];
             String user         = parts[1];
@@ -604,8 +605,8 @@ public class ConfigurableJdbcEtl {
                     "  'driver' = '" + driver + "'," +
                     "  'table-name' = '" + table + "'" +
                     ")";
-            System.out.println("    [DDL] " + ddl);
-            tableEnv.executeSql(ddl);
+            System.out.println("    [DDL] " + LogSanitizer.redactCredentials(ddl));
+            executeSqlSafely(tableEnv, ddl, "Source table registration failed for " + alias);
 
             // 检查 schema 中是否有 LOB / BINARY / RAW 列，对这些列注册 view 把对象 toString 拆成真文本
             // (达梦 JDBC DmdbNClob / DmdbBlob 等对象 .toString() 拿到的是 JVM 对象 ID,
@@ -690,7 +691,7 @@ public class ConfigurableJdbcEtl {
                     "  'sink.buffer-flush.max-rows' = '200'," +
                     "  'sink.buffer-flush.interval' = '2s'" +
                     ")";
-            tableEnv.executeSql(ddl);
+            executeSqlSafely(tableEnv, ddl, "Sink table registration failed for " + alias);
             if (!firstSink) multiInsert.append(", ");
             multiInsert.append(alias);
             firstSink = false;
@@ -717,7 +718,7 @@ public class ConfigurableJdbcEtl {
         // 7. 执行 SQL
         System.out.println("[Step 4/4] 开始执行 SQL...");
         System.out.println("----------------------------------------");
-        System.out.println("[SQL]\n" + finalSqlFull);
+        System.out.println("[SQL]\n" + LogSanitizer.redactCredentials(finalSqlFull));
         System.out.println("----------------------------------------");
 
         String[] sqls = finalSqlFull.split(";\\s*\\n?\\s*");
@@ -733,8 +734,9 @@ public class ConfigurableJdbcEtl {
             long sqlStart = System.currentTimeMillis();
             if (upper.startsWith("CREATE VIEW") || upper.startsWith("CREATE TEMPORARY VIEW")
                     || upper.startsWith("CREATE TABLE") || upper.startsWith("CREATE TEMPORARY TABLE")) {
-                System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 执行 DDL: " + s.substring(0, Math.min(80, s.length())).replace("\n"," ") + "...");
-                tableEnv.executeSql(s);
+                System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 执行 DDL: "
+                        + LogSanitizer.redactCredentials(s.substring(0, Math.min(80, s.length())).replace("\n", " ")) + "...");
+                executeSqlSafely(tableEnv, s, "DDL execution failed");
                 System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] DDL 执行完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms)");
             } else if (upper.startsWith("INSERT INTO")) {
                 String sinkName = extractTableName(s);
@@ -743,25 +745,25 @@ public class ConfigurableJdbcEtl {
                 System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 执行 " + operation + " → " + sinkName + " ...");
                 // INSERT 提交的是异步 Flink 作业；必须等待 TableResult 完成，
                 // 否则主进程提前退出会让 JDBC Sink（尤其达梦）回滚事务。
-                org.apache.flink.table.api.TableResult insertResult = tableEnv.executeSql(s);
+                org.apache.flink.table.api.TableResult insertResult = executeSqlSafely(tableEnv, s, "INSERT execution failed");
                 try {
                     insertResult.await();
                 } catch (Exception ex) {
                     // JDBC 驱动通常只返回约束名；补充打印目标表的主键字段，便于用户定位冲突列。
                     printConflictFields(sinkName, sinks);
-                    throw ex;
+                    throw sanitizedFailure("INSERT execution failed", ex);
                 }
                 System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] INSERT 完成 → " + sinkName + " (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms)");
             } else {
                 System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 执行查询...");
                 // 使用 TableResult.print() 让 Flink 直接把结果输出到当前 stdout
-                org.apache.flink.table.api.TableResult result = tableEnv.executeSql(s);
+                org.apache.flink.table.api.TableResult result = executeSqlSafely(tableEnv, s, "Query execution failed");
                 try {
                     // 将 stdout 临时改到当前 Process 的 System.out, 这样 collect() 的打印能被父进程读到
                     result.print();
                     System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 查询完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms)");
                 } catch (Exception ex) {
-                    System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 查询完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms), print 失败: " + ex.getMessage());
+                    System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 查询完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms), print 失败: " + LogSanitizer.redactCredentials(ex.getMessage()));
                 }
             }
         }
@@ -773,6 +775,22 @@ public class ConfigurableJdbcEtl {
         System.out.println("[Flink ETL] 总耗时: " + formatDuration(totalTime));
         System.out.println("[Flink ETL] 执行SQL数: " + totalSqls + " | 数据源: " + srcCount + " | 目标表: " + sinkCount);
         System.out.println("========================================");
+    }
+
+    private static org.apache.flink.table.api.TableResult executeSqlSafely(
+            StreamTableEnvironment tableEnv, String sql, String context) {
+        try {
+            return tableEnv.executeSql(sql);
+        } catch (Exception e) {
+            throw sanitizedFailure(context, e);
+        }
+    }
+
+    private static RuntimeException sanitizedFailure(String context, Exception cause) {
+        String message = LogSanitizer.redactCredentials(cause.getMessage());
+        String detail = message == null || message.trim().isEmpty() ? "no further details" : message;
+        // Do not chain the original exception: its nested messages may contain the raw SQL/DDL.
+        return new RuntimeException(context + " (" + cause.getClass().getSimpleName() + "): " + detail);
     }
 
     private static void printConflictFields(String sinkAlias, String[] sinkSpecs) {
@@ -790,7 +808,7 @@ public class ConfigurableJdbcEtl {
                 return;
             }
         } catch (Exception metadataError) {
-            System.err.println("[JDBC] 无法读取冲突字段: " + metadataError.getMessage());
+            System.err.println("[JDBC] 无法读取冲突字段: " + LogSanitizer.redactCredentials(metadataError.getMessage()));
         }
     }
 

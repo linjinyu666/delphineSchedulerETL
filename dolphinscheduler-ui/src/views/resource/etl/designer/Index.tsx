@@ -1733,7 +1733,16 @@ export default defineComponent({
     // 将 JDBC 唯一性冲突翻译成用户可直接理解的提示，同时保留原始日志便于排查。
     const formatTestRunMessage = (raw: string) => {
       const text = String(raw || '')
-      if (!/(BatchUpdateException|unique|唯一性|违反表.*约束|ORA-00001|duplicate key)/i.test(text)) return text
+      const isConstraintConflict =
+        /BatchUpdateException|SQLIntegrityConstraintViolationException|ORA-00001|主键冲突/i.test(text)
+        || /unique\s+(?:constraint|index|key)|唯一性约束|违反表.*唯一性|duplicate\s+(?:key|entry)/i.test(text)
+      if (!isConstraintConflict) return text
+      // Preview 节点只执行 SELECT 并打印结果。只有日志/本次生成的 SQL 确实执行 INSERT，
+      // 才给出“切换 REPLACE INTO”的建议，避免把查询或打印失败误报成写入冲突。
+      const writeAttempted = /(?:^|[\n;])\s*INSERT\s+INTO\b/im.test(text)
+        || /\[SQL\s+\d+\/\d+\]\s+执行\s+(?:INSERT|REPLACE\s+INTO)\b/i.test(text)
+        || /(?:^|[\n;])\s*INSERT\s+INTO\b/im.test(lastBuiltSql.value)
+      if (!writeAttempted) return text
       const detail = text.match(/违反表\[([^\]]+)\]唯一性约束条件\[([^\]]+)\]/i)
       const target = detail?.[1] || '目标表'
       const constraint = detail?.[2] ? `（约束：${detail[2]}）` : ''

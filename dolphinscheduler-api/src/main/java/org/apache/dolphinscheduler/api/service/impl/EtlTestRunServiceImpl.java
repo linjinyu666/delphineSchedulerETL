@@ -64,6 +64,7 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                     + "-Dslf4j.provider=ch.qos.logback.classic.spi.LogbackServiceProvider";
     private static final String DEFAULT_JAR = "flink-learning-1.0.0-SNAPSHOT.jar";
     private static final Path PROPS_DIR = Paths.get("/tmp/ds-etl-test");
+    private static final int LIVE_LOG_PREVIEW_CHARS = 50_000;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
     private final ConcurrentHashMap<String, JobStatus> jobs = new ConcurrentHashMap<>();
@@ -766,9 +767,10 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
                 continue;
             }
             sb.append(line).append("\n");
-            // 截取最新 50000 字日志, 避免超大内存 (查询数据 200 行可能占用较多空间)
-            st.message = sb.length() > 50000
-                    ? "..." + sb.substring(sb.length() - 50000)
+            // 任务运行期间轮询只返回最近的预览，避免每次状态响应都携带完整日志；
+            // 完整输出保留在 sb 中，并在任务结束后一次性返回。
+            st.message = sb.length() > LIVE_LOG_PREVIEW_CHARS
+                    ? "..." + sb.substring(sb.length() - LIVE_LOG_PREVIEW_CHARS)
                     : sb.toString();
         }
 
@@ -778,10 +780,13 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
 
         if (exit == 0) {
             st.status = "SUCCESS";
-            st.message = "Job done!\n\n" + st.message;
+            // While the process is running, status polling only returns the tail to keep each
+            // response bounded. Once it exits, return the complete captured output so the final
+            // log view/copy/download does not silently lose the beginning of long runs.
+            st.message = "Job done!\n\n" + sb;
         } else {
             st.status = "FAILED";
-            st.message = "Failed (exit " + exit + ")\n\n" + st.message;
+            st.message = "Failed (exit " + exit + ")\n\n" + sb;
         }
     }
 
