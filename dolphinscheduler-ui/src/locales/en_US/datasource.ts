@@ -42,6 +42,7 @@ export default {
   edit: 'Edit',
   success: 'Success',
   test_connect: 'Test Connect',
+  test_connect_failed: 'Connection test failed',
   ip: 'IP',
   ip_tips: 'Please enter IP',
   port: 'Port',

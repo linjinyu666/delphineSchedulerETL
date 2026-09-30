@@ -42,6 +42,7 @@ export default {
   edit: '编辑',
   success: '成功',
   test_connect: '测试连接',
+  test_connect_failed: '测试连接失败',
   ip: 'IP主机名',
   ip_tips: '请输入IP主机名',
   port: '端口',

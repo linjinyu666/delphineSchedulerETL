@@ -34,6 +34,7 @@ import Search from '@/components/input-search'
 import DetailModal from './detail'
 import type { TableColumns } from './types'
 import SourceModal from './source-modal'
+import { connectionTest } from '@/service/modules/data-source'
 
 const list = defineComponent({
   name: 'list',
@@ -41,6 +42,7 @@ const list = defineComponent({
     const { t } = useI18n()
     const showDetailModal = ref(false)
     const showSourceModal = ref(false)
+    const testingId = ref<number | null>(null)
     const selectType = ref('MYSQL')
     const selectId = ref()
     const columns = ref({
@@ -50,16 +52,42 @@ const list = defineComponent({
     const { data, changePage, changePageSize, deleteRecord, updateList } =
       useTable()
 
+    const testSavedConnection = async (id: number) => {
+      if (testingId.value !== null) return
+      testingId.value = id
+      try {
+        const connected = await connectionTest(id)
+        if (connected === true) {
+          window.$message.success(
+            `${t('datasource.test_connect')} ${t('datasource.success')}`
+          )
+        } else {
+          window.$message.error(t('datasource.test_connect_failed'))
+        }
+      } catch (error) {
+        // The API interceptor already shows server-side errors; show a fallback
+        // only for transport errors that do not have an API response message.
+        if (error instanceof Error && error.message) {
+          window.$message.error(t('datasource.test_connect_failed'))
+        }
+      } finally {
+        testingId.value = null
+      }
+    }
+
     const { getColumns } = useColumns(
-      (id: number, type: 'edit' | 'delete', row?: any) => {
+      (id: number, type: 'edit' | 'delete' | 'test', row?: any) => {
         if (type === 'edit') {
           showDetailModal.value = true
           selectId.value = id
           selectType.value = row.type
+        } else if (type === 'test') {
+          void testSavedConnection(id)
         } else {
           deleteRecord(id)
         }
-      }
+      },
+      testingId
     )
 
     const onCreate = () => {
@@ -88,7 +116,7 @@ const list = defineComponent({
       columns.value = getColumns()
     })
 
-    watch(useI18n().locale, () => {
+    watch([useI18n().locale, testingId], () => {
       columns.value = getColumns()
     })
 

@@ -16,6 +16,7 @@
  */
 
 import { h } from 'vue'
+import type { Ref } from 'vue'
 import { useI18n } from 'vue-i18n'
 import {
   NPopover,
@@ -25,7 +26,7 @@ import {
   NSpace,
   NTooltip
 } from 'naive-ui'
-import { EditOutlined, DeleteOutlined } from '@vicons/antd'
+import { EditOutlined, DeleteOutlined, LinkOutlined } from '@vicons/antd'
 import JsonHighlight from './json-highlight'
 import ButtonLink from '@/components/button-link'
 import {
@@ -35,7 +36,10 @@ import {
 } from '@/common/column-width-config'
 import type { TableColumns } from './types'
 
-export function useColumns(onCallback: Function) {
+export function useColumns(
+  onCallback: Function,
+  testingId: Ref<number | null>
+) {
   const { t } = useI18n()
 
   const getColumns = (): { columns: TableColumns; tableWidth: number } => {
@@ -97,7 +101,7 @@ export function useColumns(onCallback: Function) {
       {
         title: t('datasource.operation'),
         key: 'operation',
-        ...COLUMN_WIDTH_CONFIG['operation'](2),
+        ...COLUMN_WIDTH_CONFIG['operation'](3),
         render: (rowData) => {
           return h(NSpace, null, {
             default: () => [
@@ -118,6 +122,26 @@ export function useColumns(onCallback: Function) {
                     }
                   ),
                 default: () => t('datasource.edit')
+              }),
+              h(NTooltip, null, {
+                trigger: () =>
+                  h(
+                    NButton,
+                    {
+                      circle: true,
+                      type: 'primary',
+                      size: 'small',
+                      loading: testingId.value === rowData.id,
+                      disabled: testingId.value !== null,
+                      'aria-label': t('datasource.test_connect'),
+                      onClick: () => void onCallback(rowData.id, 'test')
+                    },
+                    {
+                      default: () =>
+                        h(NIcon, null, { default: () => h(LinkOutlined) })
+                    }
+                  ),
+                default: () => t('datasource.test_connect')
               }),
               h(NTooltip, null, {
                 trigger: () =>
