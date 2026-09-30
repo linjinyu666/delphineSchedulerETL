@@ -385,13 +385,18 @@ public class DataSourceController extends BaseController {
         return Result.success(options);
     }
 
-    /**
-     * query the list of databases available in a specific data source
-     *
-     * @param loginUser the current logged-in user (injected from session)
-     * @param datasourceId the unique identifier of the data source
-     * @return a list of database names/options accessible to the user
-     */
+    /** Resolve the database/schema selected by this datasource connection for ETL. */
+    @Operation(summary = "getEtlNamespace", description = "GET_FIXED_ETL_DATASOURCE_NAMESPACE")
+    @GetMapping(value = "/{id}/etl-namespace")
+    @ResponseStatus(HttpStatus.OK)
+    @ApiException(QUERY_DATASOURCE_ERROR)
+    public Result<Object> getEtlNamespace(
+                                          @Parameter(hidden = true) @RequestAttribute(value = Constants.SESSION_USER) User loginUser,
+                                          @PathVariable("id") Integer datasourceId) {
+        return Result.success(dataSourceService.getEtlNamespace(loginUser, datasourceId));
+    }
+
+    /** Query the list of databases available in a specific data source. */
     @Operation(summary = "databases", description = "GET_DATASOURCE_DATABASE_NOTES")
     @Parameters({
             @Parameter(name = "datasourceId", description = "DATA_SOURCE_ID", required = true, schema = @Schema(implementation = int.class, example = "1"))
@@ -404,4 +409,5 @@ public class DataSourceController extends BaseController {
         List<ParamsOptions> options = dataSourceService.getDatabases(loginUser, datasourceId);
         return Result.success(options);
     }
+
 }

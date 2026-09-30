@@ -38,6 +38,7 @@ import org.apache.dolphinscheduler.plugin.datasource.api.datasource.DataSourcePr
 import org.apache.dolphinscheduler.plugin.datasource.api.utils.DataSourceUtils;
 import org.apache.dolphinscheduler.spi.datasource.BaseConnectionParam;
 import org.apache.dolphinscheduler.spi.datasource.ConnectionParam;
+import org.apache.dolphinscheduler.spi.datasource.EtlDatasourceNamespace;
 import org.apache.dolphinscheduler.spi.enums.DbType;
 import org.apache.dolphinscheduler.spi.params.base.ParamsOptions;
 
@@ -407,9 +408,10 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                 return Collections.emptyList();
             }
 
+            boolean schemaDatasource = dataSource.getType() == DbType.ORACLE || dataSource.getType() == DbType.DAMENG;
             tables = metaData.getTables(
-                    database,
-                    getDbSchemaPattern(dataSource.getType(), schema, connectionParam),
+                    schemaDatasource ? null : database,
+                    schemaDatasource ? database : getDbSchemaPattern(dataSource.getType(), schema, connectionParam),
                     "%", TABLE_TYPES);
             if (null == tables) {
                 log.warn("[datasource] getTables returned null for id={} type={}, return empty table list",
@@ -484,7 +486,9 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
 
             DatabaseMetaData metaData = connection.getMetaData();
 
-            if (dataSource.getType() == DbType.ORACLE) {
+            String metadataSchema = null;
+            if (dataSource.getType() == DbType.ORACLE || dataSource.getType() == DbType.DAMENG) {
+                metadataSchema = database;
                 database = null;
             }
 
@@ -493,7 +497,7 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
             // and generate the correct upsert/merge semantics for the target table.
             Set<String> primaryKeys = new HashSet<>();
             try {
-                primaryKeyRs = metaData.getPrimaryKeys(null, null, tableName);
+                primaryKeyRs = metaData.getPrimaryKeys(database, metadataSchema, tableName);
                 while (primaryKeyRs != null && primaryKeyRs.next()) {
                     String primaryKey = primaryKeyRs.getString(COLUMN_NAME);
                     if (primaryKey != null) {
@@ -511,7 +515,7 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
                 primaryKeyRs = null;
             }
 
-            rs = metaData.getColumns(database, null, tableName, "%");
+            rs = metaData.getColumns(database, metadataSchema, tableName, "%");
             if (rs == null) {
                 log.warn("[datasource] getColumns returned null for id={} type={}, return empty column list",
                         dataSource.getId(), dataSource.getType());
@@ -574,6 +578,30 @@ public class DataSourceServiceImpl extends BaseServiceImpl implements DataSource
 
         List<ParamsOptions> options = getParamsOptions(columnList);
         return options;
+    }
+
+    @Override
+    public String getEtlNamespace(User loginUser, Integer datasourceId) {
+        DataSource dataSource = dataSourceDao.queryById(datasourceId);
+        if (dataSource == null) {
+            throw new ServiceException(Status.QUERY_DATASOURCE_ERROR);
+        }
+        if (!canOperatorPermissions(loginUser, new Object[]{datasourceId}, AuthorizationType.DATASOURCE,
+                ApiFuncIdentificationConstant.DATASOURCE)) {
+            throw new ServiceException(Status.USER_NO_OPERATION_PERM);
+        }
+        BaseConnectionParam param = (BaseConnectionParam) DataSourceUtils.buildConnectionParams(
+                dataSource.getType(), dataSource.getConnectionParams());
+        if (param == null) {
+            throw new ServiceException(Status.QUERY_DATASOURCE_ERROR);
+        }
+        try (Connection connection = DataSourceUtils.getConnection(dataSource.getType(), param)) {
+            return EtlDatasourceNamespace.resolve(dataSource.getType(), param, connection);
+        } catch (Exception e) {
+            log.warn("Cannot resolve fixed ETL database/schema for datasource id={} ({})", datasourceId,
+                    e.getClass().getSimpleName());
+            throw new ServiceException(Status.QUERY_DATASOURCE_ERROR);
+        }
     }
 
     @Override

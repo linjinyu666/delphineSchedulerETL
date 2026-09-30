@@ -59,6 +59,9 @@ public interface DataSourceService {
      */
     BaseDataSourceParamDTO queryDataSource(int id, User loginUser);
 
+    /** Return the database/schema used by this datasource's own JDBC connection for ETL tables. */
+    String getEtlNamespace(User loginUser, Integer datasourceId);
+
     /**
      * query datasource list by keyword
      *

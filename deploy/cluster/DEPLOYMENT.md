@@ -29,7 +29,7 @@ Alert Service (1 副本) ------|
 | `deploy/cluster/Dockerfile` | 构建统一角色镜像 |
 | `deploy/cluster/build-image.sh` | Maven 打包并构建镜像 |
 | `deploy/cluster/entrypoint.sh` | 根据 `SERVICE` 启动 API、Master、Worker 或 Alert |
-| `deploy/cluster/runtime-env.sh` | 统一配置 JDK 8、JDK 17、MySQL 和运行根目录 |
+| `deploy/cluster/runtime-env.sh` | 统一配置 JDK 8、JDK 17、Flink CLI、ETL Runner 和运行根目录 |
 | `deploy/cluster/start-service.sh` | 直接启动指定角色服务 |
 | `deploy/cluster/check-etl-java.sh` | 检查 Flink ETL 是否使用 JDK 17 |
 | `deploy/cluster/nginx.conf` | Nginx 入口代理配置 |
@@ -72,6 +72,18 @@ Worker 执行 ETL 时需要设置 Flink 依赖目录。当前 ETL Worker 会优�
 export ETL_JAVA_HOME=/opt/jdk17
 export FLINK_LEARNING_LIB=/opt/dolphinscheduler-flink-etl-runtime-3.4.2/standalone-server/lib
 ```
+
+### Flink Session 集群执行（可选）
+
+当 ETL 节点选择“Flink 集群执行”时，Worker 容器还必须能读到 Flink 1.20 CLI、JDK 17 和瘦身版 `*-cluster.jar`。它们没有由 DolphinScheduler Maven 构建自动下载或塞入镜像；建议通过 CCE PVC/NFS 挂载，或使用内网可访问的制品镜像。Worker Pod 环境变量示例：
+
+```text
+FLINK_HOME=/opt/flink
+ETL_JAVA_HOME=/opt/jdk17
+FLINK_ETL_CLUSTER_JAR=/opt/dolphinscheduler-flink-etl-runtime-3.4.2/flink-learning-1.0.0-SNAPSHOT-cluster.jar
+```
+
+挂载内容需满足：`$FLINK_HOME/bin/flink` 可执行、`$ETL_JAVA_HOME/bin/java` 可执行，`FLINK_ETL_CLUSTER_JAR` 指向由 `mvn -Pcluster package` 生成的 Runner JAR。Worker 到 JobManager REST 地址可连通；Flink TaskManager 到每个源库/目标库的网络也必须连通。修改镜像或 Pod 环境变量后滚动更新所有 Worker 副本。API 的 ETL“测试运行”仍走本地 Fat JAR 路径；此处的集群提交流程针对 Worker 工作流任务。
 
 如果流水线已经提前打包，也可以直接准备：
 
@@ -158,6 +170,10 @@ kubectl -n etl create secret generic dolphinscheduler-db \
 - 探针：`GET /dolphinscheduler/actuator/health`；
 - 挂载共享资源和日志存储。
 
+若 ETL 设计器需要读取 Oracle 数据源，API 进程的类路径必须包含兼容 JDK 8 的 `ojdbc8-*.jar`。`dolphinscheduler-datasource-oracle-*.jar` 只是数据源插件，不等于 Oracle JDBC 驱动。将驱动放入镜像内的 `api-server/libs/`，并滚动更新所有 API 副本；否则“测试连接”和自动绑定 Schema 都会因 `oracle.jdbc.OracleDriver` 缺失而失败。Flink Runner 所在的 `flink-etl/lib/` 不在 API 类路径内，单独放在那里无效。
+
+本地 standalone 启动则放在 `standalone-server/libs/`，并重启 standalone 进程；运行中的 JVM 不会动态加载后来复制的 JAR。重新生成分发目录时须重新放入驱动，因为普通 Maven 分发包不自动捆绑 Oracle JDBC 驱动。
+
 ### 6.3 Master
 
 - `SERVICE=master`；
@@ -173,6 +189,8 @@ kubectl -n etl create secret generic dolphinscheduler-db \
 - RPC 端口：1234；
 - `WORKER_EXECUTION_PATH` 使用持久卷或可写临时目录；
 - 如果执行 ETL/Flink，需要把 ETL jar、JDBC 驱动和插件随镜像打入，不能依赖公网下载。
+- Worker 上需要直接访问 Oracle 的任务，也应在 `worker-server/libs/` 放入同一 `ojdbc8-*.jar`；Flink 集群执行时还需确保 Runner/TaskManager 一侧有 Oracle 驱动。
+- 若使用 Flink Session 集群执行，按上节挂载 Flink CLI、JDK 17 和 `*-cluster.jar`，并给 Worker Pod 注入 `FLINK_HOME`、`ETL_JAVA_HOME`、`FLINK_ETL_CLUSTER_JAR`；不要只配置 JobManager 地址而遗漏提交客户端文件。
 
 ### 6.5 Alert
 

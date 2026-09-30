@@ -58,12 +58,11 @@ import {
 } from '@/service/modules/resources'
 import {
   queryDataSourceList,
-  getDatasourceDatabasesById,
   getDatasourceTablesById,
   getDatasourceTableColumnsById
 } from '@/service/modules/data-source'
 import { useNodeMenu, generateSqlFromGraph, NODE_DEFINITIONS } from './node-registry'
-import { buildPipeline, buildPipelineRequest } from './pipeline-builder'
+import { buildPipeline, buildPipelineRequest, EtlNamespaceMismatchError } from './pipeline-builder'
 import { computeNodeStatus, validateNodeConfig } from './node-validator'
 import { runFlinkPipeline, getFlinkJobStatus, stopFlinkJob, checkFlinkEtlHealth } from '@/service/modules/flink-etl'
 import { queryDataSourceListPaging } from '@/service/modules/data-source'
@@ -137,6 +136,11 @@ function displayMappingExpression(expression: string): string {
 function validateSinkMappings(config: any): string[] {
   const mappings = Array.isArray(config?.fieldMappings) ? config.fieldMappings : []
   const errors: string[] = []
+  if (config?.cascade?.namespaceError) errors.push(config.cascade.namespaceError)
+  if (config?.cascade?.fixedDatabase && config?.cascade?.database
+    && String(config.cascade.fixedDatabase).toLowerCase() !== String(config.cascade.database).toLowerCase()) {
+    errors.push('目标表 Schema / 数据库与数据源绑定值不一致')
+  }
   const sourcePattern = /^[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?$/
   const castPattern = /^(?:TRY_)?CAST\(([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)\s+AS\s+([A-Za-z][A-Za-z0-9]*(?:\([0-9]+(?:\s*,\s*[0-9]+)?\))?)\)$/i
   mappings.forEach((mapping: any) => {
@@ -1571,6 +1575,7 @@ export default defineComponent({
             console.warn('[etl-designer] build warnings:', built.warnings)
           }
         } catch (buildErr: any) {
+          if (buildErr instanceof EtlNamespaceMismatchError) throw buildErr
           console.error('[etl-designer] buildPipeline failed:', buildErr?.message || buildErr)
           message.warning('画布构建 ETL 失败：' + (buildErr?.message || '未知错误') + '，作业仍可保存（仅 designer 画布）')
         }
@@ -2731,6 +2736,7 @@ export default defineComponent({
                         return (
                           <div key={f.key} class='etl-node-config-item etl-node-config-item--cascade'>
                             <CascadeConfig
+                              key={`${activeNodeId.value}-${f.key}`}
                               modelValue={activeNodeConfig.value.cascade || {}}
                               onUpdate:modelValue={(v: any) => {
                                 activeNodeConfig.value.cascade = v

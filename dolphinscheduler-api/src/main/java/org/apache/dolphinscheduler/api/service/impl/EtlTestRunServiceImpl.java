@@ -18,6 +18,9 @@
 package org.apache.dolphinscheduler.api.service.impl;
 
 import org.apache.dolphinscheduler.api.service.EtlTestRunService;
+import org.apache.dolphinscheduler.plugin.datasource.api.utils.DataSourceUtils;
+import org.apache.dolphinscheduler.spi.datasource.BaseConnectionParam;
+import org.apache.dolphinscheduler.spi.datasource.EtlDatasourceNamespace;
 
 import java.io.BufferedReader;
 import java.io.File;
@@ -27,6 +30,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -78,11 +82,17 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
 
         // 前端 designer 节点的 cascade.dsId 可能因为历史作业 / 用户删除后重建 等原因,
         // 与 req.datasources 里的 id 集合对不上。此时按节点的 alias / 节点自带连接参数 / DS DB 三级反查补全。
-        resolveMissingDatasources(req);
-
-        // 前端从 /datasources API 拿到的 datasource.connectionParams.password 是 "******" 脱敏值,
-        // 需要从数据库里把真实密码回填到 req.datasources 里。
-        fillMissingPasswordsFromDb(req);
+        try {
+            resolveMissingDatasources(req);
+            // Resolve credentials and the connection's fixed database/schema from the same DS record.
+            fillMissingPasswordsFromDb(req);
+        } catch (Exception e) {
+            st.status = "FAILED";
+            st.message = "ETL datasource configuration could not be resolved. Check that each source/sink uses "
+                    + "an existing datasource bound to the intended database/schema.";
+            log.warn("ETL datasource configuration failed: {}", e.getClass().getSimpleName());
+            return st;
+        }
 
         File jar = resolveJar();
         if (jar == null || !jar.isFile()) {
@@ -313,6 +323,7 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         Object portObj = ds.get("port");
         int port = portObj instanceof Number ? ((Number) portObj).intValue() : defaultPort(type);
         String database = stringOf(ds.get("database"));
+        String fixedNamespace = stringOf(ds.get("fixedNamespace"));
         // 兼容 userName / username 两种字段名
         Object userNameObj = ds.get("userName");
         Object userObj = ds.get("username");
@@ -343,7 +354,15 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         String ownerStr = stringOf(node.get("owner"));
         boolean isCatalogDb = "mysql".equals(type) || "postgresql".equals(type) || "postgres".equals(type)
                 || "pg".equals(type) || "sqlserver".equals(type);
-        boolean crossDb = isCatalogDb && !ownerStr.isEmpty() && !ownerStr.equalsIgnoreCase(database);
+        if (!fixedNamespace.isEmpty()) {
+            EtlDatasourceNamespace.requireMatch(ownerStr, fixedNamespace);
+            ownerStr = fixedNamespace;
+            if ("mysql".equals(type)) {
+                database = fixedNamespace;
+            }
+        }
+        boolean crossDb = fixedNamespace.isEmpty() && isCatalogDb && !ownerStr.isEmpty()
+                && !ownerStr.equalsIgnoreCase(database);
         if (crossDb && !table.contains(".")) {
             // 把 table 留作裸名, URL 切换到 owner 库, Flink 拼成 owner.table
             database = ownerStr;
@@ -390,7 +409,7 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
             fields = jsonListOfFields((List<?>) fieldsObj);
         }
 
-        String owner = stringOf(node.get("owner"));
+        String owner = fixedNamespace.isEmpty() ? stringOf(node.get("owner")) : fixedNamespace;
         String tableSchema = stringOf(node.get("tableSchema"));
 
         String base = String.join("|",
@@ -685,25 +704,33 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
             String id = stringOf(ds.get("id"));
             if (id.isEmpty())
                 continue;
-            // 只在 password 为空 / "******" 时才查库
-            String pw = stringOf(ds.get("password"));
-            if (!pw.isEmpty() && !"******".equals(pw))
-                continue;
+            int dsId;
             try {
-                int dsId = Integer.parseInt(id);
+                dsId = Integer.parseInt(id);
+            } catch (NumberFormatException e) {
+                // Compare/join virtual nodes may use alias-based temporary ids.
+                continue;
+            }
+            try {
                 org.apache.dolphinscheduler.dao.entity.DataSource ent = dataSourceMapper.selectById(dsId);
                 if (ent == null || ent.getConnectionParams() == null)
-                    continue;
+                    throw new IllegalArgumentException("Datasource does not exist: " + dsId);
+                BaseConnectionParam param = (BaseConnectionParam) DataSourceUtils.buildConnectionParams(
+                        ent.getType(), ent.getConnectionParams());
+                try (Connection connection = DataSourceUtils.getConnection(ent.getType(), param)) {
+                    ds.put("fixedNamespace", EtlDatasourceNamespace.resolve(ent.getType(), param, connection));
+                }
                 com.fasterxml.jackson.databind.ObjectMapper mapper =
                         new com.fasterxml.jackson.databind.ObjectMapper();
                 Map<String, Object> cp = mapper.readValue(ent.getConnectionParams(), Map.class);
                 String realPw = stringOf(cp.get("password"));
-                if (!realPw.isEmpty()) {
+                String pw = stringOf(ds.get("password"));
+                if ((!realPw.isEmpty()) && (pw.isEmpty() || "******".equals(pw))) {
                     ds.put("password", realPw);
-                    log.info("[etl-test-run] 回填 datasource id={} 的真实密码", dsId);
                 }
             } catch (Exception e) {
-                log.warn("[etl-test-run] 读取 datasource id={} 真实密码失败: {}", id, e.getMessage());
+                throw new IllegalArgumentException("Cannot resolve datasource id=" + id
+                        + " fixed database/schema", e);
             }
         }
     }
@@ -819,36 +846,19 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
         return cmd;
     }
 
-    /**
-     * 与 etl-flinksql PipelineService.resolveJavaCmd 行为一致
-     */
     private static String resolveJavaCmd() {
-        // flink-learning 编译目标是 JDK 11+, 需要 --add-opens 等 JVM 参数。
-        // DS 自身跑在 JDK 8 上, 默认 java.home 不支持这些参数。
-        // 优先级:
-        // 1) $FLINK_LEARNING_JAVA_HOME / $ETL_JAVA_HOME 环境变量
-        // 2) /Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-22.0.2 (开发机)
-        // 3) 当前 JVM 的 java.home
-        // 4) PATH 中的 java
-        String[] candidateHomes = {
-                System.getenv("FLINK_LEARNING_JAVA_HOME"),
-                System.getenv("ETL_JAVA_HOME"),
-                "/Users/linjinyu/Library/Java/JavaVirtualMachines/corretto-22.0.2/Contents/Home",
-                System.getProperty("java.home"),
-        };
-        for (String home : candidateHomes) {
-            if (home == null || home.isEmpty())
-                continue;
-            File jhDir = new File(home);
-            if (jhDir.getName().equals("jre")) {
-                jhDir = jhDir.getParentFile();
-            }
-            File javaBin = new File(jhDir, "bin/java");
-            if (javaBin.exists() && javaBin.canExecute()) {
-                return javaBin.getAbsolutePath();
-            }
+        // DolphinScheduler 本身使用 JDK 8；ETL 子进程统一使用单独配置的 Java。
+        String home = System.getenv("ETL_JAVA_HOME");
+        if (home == null || home.trim().isEmpty()) {
+            throw new IllegalStateException(
+                    "ETL_JAVA_HOME is required for ETL test runs (JDK 11+, recommended JDK 17)");
         }
-        return "java";
+        File javaBin = new File(home.trim(), "bin/java");
+        if (!javaBin.isFile() || !javaBin.canExecute()) {
+            throw new IllegalStateException("ETL_JAVA_HOME does not contain an executable bin/java: "
+                    + javaBin.getAbsolutePath());
+        }
+        return javaBin.getAbsolutePath();
     }
 
     private static String currentJavaHome() {

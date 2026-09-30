@@ -69,6 +69,7 @@ flink-etl_副本/
 !**/dolphinscheduler-standalone-server/target/standalone-server/sql
 
 # Runtime artefacts inside the whitelisted dev dir — do NOT commit.
+**/dolphinscheduler-standalone-server/target/flink-client-*/
 **/dolphinscheduler-standalone-server/target/standalone-server/logs/
 **/dolphinscheduler-standalone-server/target/standalone-server/logs/**
 **/dolphinscheduler-standalone-server/target/standalone-server/standalone.out

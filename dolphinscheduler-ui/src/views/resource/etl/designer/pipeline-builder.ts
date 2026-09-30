@@ -51,6 +51,7 @@ export interface DbNodeConfig {
   datasourceId: string
   table: string
   owner?: string
+  fixedNamespace?: string
   tableSchema?: string
   fields?: Array<{ name: string; type: string }>
   mode?: string          // append | upsert | retract（sink 专用）
@@ -78,6 +79,8 @@ export interface BuiltPipeline {
   parallelism: number
   warnings: string[]      // 构建过程中的警告（拓扑不全、孤立节点等）
 }
+
+export class EtlNamespaceMismatchError extends Error {}
 
 /** 将界面写入模式转换为 flink-etl JDBC sink 协议。 */
 function normalizeSinkMode(mode: unknown): 'append' | 'upsert' {
@@ -139,10 +142,8 @@ export function buildPipeline(
   const sources = sourceNodes
     .map((n) => {
       const cfg = n.config || {}
-      // 兼容两种 datasourceId 存放位置:
-      //   1) n.config.datasourceId          (老 flink-etl_副本 旧协议)
-      //   2) n.config.cascade.dsId          (DS designer 新面板)
-      const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
+      // 新面板的 cascade 为准；仅在旧作业没有 cascade 时回退平铺字段。
+      const dsId = cfg.cascade?.dsId ?? cfg.datasourceId
       if (!dsId) {
         warnings.push(`source 节点 "${n.label}" 缺少 datasourceId`)
         return ''
@@ -153,16 +154,17 @@ export function buildPipeline(
         warnings.push(`source 节点 "${n.label}" 引用未知数据源 ${dsId}`)
         return ''
       }
-      const table = cfg.table ?? cfg.cascade?.table ?? ''
-      const owner = cfg.owner ?? cfg.database ?? cfg.cascade?.database
-      const tableSchema = cfg.tableSchema ?? cfg.cascade?.tableSchema
-      const fields = cfg.columns ?? cfg.cascade?.columns ?? cfg.fields
+      const table = cfg.cascade?.table ?? cfg.table ?? ''
+      const owner = cfg.cascade?.database ?? cfg.owner ?? cfg.database
+      const tableSchema = cfg.cascade?.tableSchema ?? cfg.tableSchema
+      const fields = cfg.cascade?.columns ?? cfg.columns ?? cfg.fields
       const node: DbNodeConfig = {
         // label = alias：节点的 label 就是 SQL 别名
         alias: (n.label && n.label.trim()) || cfg.alias || sanitizeAlias(n.id),
         datasourceId: String(dsId),
         table,
         owner,
+        fixedNamespace: cfg.cascade?.fixedDatabase,
         tableSchema,
         fields
       }
@@ -174,7 +176,7 @@ export function buildPipeline(
   const sinks = sinkNodes
     .map((n) => {
       const cfg = n.config || {}
-      const dsId = cfg.datasourceId ?? cfg.cascade?.dsId
+      const dsId = cfg.cascade?.dsId ?? cfg.datasourceId
       if (!dsId) {
         warnings.push(`sink 节点 "${n.label}" 缺少 datasourceId`)
         return ''
@@ -184,9 +186,9 @@ export function buildPipeline(
         warnings.push(`sink 节点 "${n.label}" 引用未知数据源 ${dsId}`)
         return ''
       }
-      const table = cfg.table ?? cfg.cascade?.table ?? ''
-      const owner = cfg.owner ?? cfg.database ?? cfg.cascade?.database
-      const tableSchema = cfg.tableSchema ?? cfg.cascade?.tableSchema
+      const table = cfg.cascade?.table ?? cfg.table ?? ''
+      const owner = cfg.cascade?.database ?? cfg.owner ?? cfg.database
+      const tableSchema = cfg.cascade?.tableSchema ?? cfg.tableSchema
       const mode = normalizeSinkMode(cfg.mode)
       const node: DbNodeConfig = {
         // label = alias：节点的 label 就是 SQL 别名
@@ -194,6 +196,7 @@ export function buildPipeline(
         datasourceId: String(dsId),
         table,
         owner,
+        fixedNamespace: cfg.cascade?.fixedDatabase,
         tableSchema,
         mode
       }
@@ -225,7 +228,7 @@ function formatDbNodeSource(ds: DatasourceConfig, node: DbNodeConfig): string {
   const { url, driver } = buildUrlAndDriver(ds)
   const table = normalizeTable(ds.type, node.table || '')
   const alias = node.alias || ''
-  const owner = node.owner || ''
+  const owner = boundNamespace(ds, node)
   const tableSchema = node.tableSchema || ''
   // fields 序列化为 JSON 数组,避免 name/type 里出现逗号/冒号(例如 DECIMAL(15,2))时分隔错位
   // 与后端 EtlTestRunServiceImpl.jsonListOfFields 保持一致
@@ -254,10 +257,23 @@ function formatDbNodeSink(ds: DatasourceConfig, node: DbNodeConfig): string {
   const { url, driver } = buildUrlAndDriver(ds)
   const table = normalizeTable(ds.type, node.table || '')
   const alias = node.alias || ''
-  const owner = node.owner || ''
+  const owner = boundNamespace(ds, node)
   const tableSchema = node.tableSchema || ''
   return [url, ds.username || '', ds.password || '', driver, table, alias, owner, tableSchema,
     normalizeSinkMode(node.mode)].join('|')
+}
+
+function boundNamespace(ds: DatasourceConfig, node: DbNodeConfig): string {
+  const type = (ds.type || '').toLowerCase()
+  const fixed = node.fixedNamespace || (type === 'mysql' ? ds.database
+    : (type === 'oracle' || type === 'dameng' || type === 'dm') ? ds.username : '')
+  const selected = node.owner || ''
+  if (fixed && selected && fixed.toLowerCase() !== selected.toLowerCase()) {
+    throw new EtlNamespaceMismatchError(
+      `节点 ${node.alias} 选择的库 / Schema「${selected}」与数据源「${ds.name || ds.id}」绑定的「${fixed}」不一致；请改选对应的数据源。`
+    )
+  }
+  return fixed || selected
 }
 
 /**

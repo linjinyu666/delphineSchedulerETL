@@ -52,6 +52,11 @@ export function validateNodeConfig(type: string, cfg: any): NodeValidation {
         missing.push('数据源 (datasourceId 或 host/port/database)')
       }
       if (hasCascade && !cascade.database) missing.push('Schema / 数据库')
+      if (hasCascade && cascade.namespaceError) errors.push(cascade.namespaceError)
+      if (hasCascade && cascade.fixedDatabase && cascade.database
+        && String(cascade.fixedDatabase).toLowerCase() !== String(cascade.database).toLowerCase()) {
+        errors.push('所选 Schema / 数据库与数据源绑定值不一致')
+      }
       if (!table) missing.push('表名')
       if (!Array.isArray(selectedColumns) || selectedColumns.length === 0) missing.push('字段')
       break

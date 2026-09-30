@@ -35,17 +35,30 @@ import org.apache.dolphinscheduler.plugin.task.api.parameters.resource.DataSourc
 import org.apache.dolphinscheduler.plugin.task.api.shell.IShellInterceptorBuilder;
 import org.apache.dolphinscheduler.plugin.task.api.shell.ShellInterceptorBuilderFactory;
 import org.apache.dolphinscheduler.spi.datasource.BaseConnectionParam;
+import org.apache.dolphinscheduler.spi.datasource.EtlDatasourceNamespace;
 
 import org.apache.commons.lang3.StringUtils;
 
+import java.io.BufferedReader;
 import java.io.File;
 import java.io.FileWriter;
 import java.io.IOException;
+import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.sql.Connection;
+import java.util.Arrays;
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.LinkedHashSet;
 import java.util.Locale;
+import java.util.Map;
+import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 
 import lombok.extern.slf4j.Slf4j;
 
@@ -71,11 +84,16 @@ public class EtlTask extends AbstractTask {
     private static final String DEFAULT_MAIN_CLASS = "com.example.flink.pipeline.ConfigurableJdbcEtl";
     private static final String DEFAULT_JVM_ARGS =
             "--add-opens java.base/java.util=ALL-UNNAMED --add-opens java.base/java.lang=ALL-UNNAMED";
+    private static final String DEFAULT_CLUSTER_JAR_PATTERN = "-cluster.jar";
+    private static final Pattern FLINK_JOB_ID_PATTERN = Pattern.compile("JobID\\s+([0-9a-fA-F]{32})");
     private static final String TMP_PROPS_DIR = "/tmp/dolphinscheduler-etl";
 
     private EtlParameters etlParameters;
     private final ShellCommandExecutor shellCommandExecutor;
     private Path propsFile;
+    private volatile String clusterEndpoint;
+    private volatile File clusterFlinkCli;
+    private volatile String clusterJavaHome;
 
     public EtlTask(TaskExecutionContext taskRequest) {
         super(taskRequest);
@@ -149,6 +167,8 @@ public class EtlTask extends AbstractTask {
             // URL、账号、密码、驱动全部以 dsId 对应的数据源配置为准。
             etlParameters.setSources(rewriteConnections(etlParameters.getSources(), resolved));
             etlParameters.setSinks(rewriteConnections(etlParameters.getSinks(), resolved));
+        } catch (TaskException e) {
+            throw e;
         } catch (Exception e) {
             throw new TaskException("Cannot resolve ETL datasource connections from dsId", e);
         }
@@ -176,16 +196,17 @@ public class EtlTask extends AbstractTask {
             return specs;
         }
         StringBuilder result = new StringBuilder();
+        Map<String, String> namespaces = new HashMap<>();
         for (String spec : specs.split(";")) {
             if (StringUtils.isBlank(spec)) {
                 continue;
             }
             String[] fields = spec.split("\\|", -1);
             if (fields.length < 4) {
-                appendSpec(result, spec);
-                continue;
+                throw new TaskException("Invalid ETL source/sink connection specification");
             }
             String matchedId = null;
+            String selectedNamespace = fields.length > 6 ? fields[6] : "";
             // Match by the node-generated table/alias spec against the ETL
             // content's datasource id and table metadata.
             if (StringUtils.isNotBlank(etlParameters.getEtlContent())) {
@@ -195,13 +216,14 @@ public class EtlTask extends AbstractTask {
                             && fields[5]
                                     .equals(node.path("config").path("alias").asText(node.path("label").asText("")))) {
                         matchedId = cascade.path("dsId").asText("");
+                        selectedNamespace = cascade.path("database").asText(selectedNamespace);
                         break;
                     }
                 }
             }
-            DataSourceParameters ds = matchedId == null && resolved.size() == 1
+            DataSourceParameters ds = StringUtils.isBlank(matchedId) && resolved.size() == 1
                     ? resolved.values().iterator().next()
-                    : (matchedId == null ? null : resolved.get(matchedId));
+                    : (StringUtils.isBlank(matchedId) ? null : resolved.get(matchedId));
             if (ds != null) {
                 // DataSourceUtils 根据数据源类型构造 Oracle、达梦、MySQL 等具体连接参数，
                 // decodePassword 解密 DS 中保存的密码；这里禁止继续使用空密码或 ******。
@@ -215,9 +237,30 @@ public class EtlTask extends AbstractTask {
                 fields[1] = conn.getUser();
                 fields[2] = password;
                 fields[3] = conn.getDriverClassName();
+                String namespaceKey = matchedId == null ? String.valueOf(ds.getType()) : matchedId;
+                String fixedNamespace = namespaces.get(namespaceKey);
+                if (fixedNamespace == null) {
+                    try (Connection connection = DataSourceUtils.getConnection(ds.getType(), conn)) {
+                        fixedNamespace = EtlDatasourceNamespace.resolve(ds.getType(), conn, connection);
+                        namespaces.put(namespaceKey, fixedNamespace);
+                    } catch (Exception e) {
+                        throw new TaskException("Cannot resolve the fixed ETL database/schema for datasource "
+                                + namespaceKey, e);
+                    }
+                }
+                try {
+                    EtlDatasourceNamespace.requireMatch(selectedNamespace, fixedNamespace);
+                } catch (IllegalArgumentException e) {
+                    throw new TaskException(e.getMessage(), e);
+                }
+                if (fields.length > 6) {
+                    fields[6] = fixedNamespace;
+                }
                 appendSpec(result, String.join("|", fields));
             } else {
-                appendSpec(result, spec);
+                throw new TaskException("Cannot match ETL source/sink '"
+                        + (fields.length > 5 ? fields[5] : fields[4])
+                        + "' to a datasource; choose an existing datasource in the ETL node configuration");
             }
         }
         return result.toString();
@@ -272,28 +315,14 @@ public class EtlTask extends AbstractTask {
             // 1. 把经过 dsId 解析和连接替换后的最终参数写入临时 properties 文件。
             this.propsFile = writePropertiesFile();
 
-            // 2. 找到 Flink ETL 程序及其依赖包所在目录，并拼接 Java classpath。
+            // 2. 集群模式由 Flink CLI 提交；本地模式由 Worker JVM 启动 Runner。
             String libDir = resolveLibDir();
-            String classpath = buildClasspath(libDir);
-
-            // 3. 组装 ConfigurableJdbcEtl 启动命令。真正的数据读取和写入由该 Flink 程序完成。
             String mainClass = StringUtils.isBlank(etlParameters.getMainClass())
                     ? DEFAULT_MAIN_CLASS
                     : etlParameters.getMainClass().trim();
-            String jvmArgs = StringUtils.isBlank(etlParameters.getJvmArgs())
-                    ? defaultJvmArgs()
-                    : etlParameters.getJvmArgs().trim();
-            jvmArgs = appendLocalJvmArgs(jvmArgs);
-            String javaCmd = resolveJavaCmd();
-
-            StringBuilder sb = new StringBuilder();
-            sb.append(javaCmd).append(Constants.SPACE)
-                    .append(jvmArgs).append(Constants.SPACE)
-                    .append("-cp").append(Constants.SPACE).append(classpath).append(Constants.SPACE)
-                    .append(mainClass).append(Constants.SPACE)
-                    .append(propsFile.toAbsolutePath());
-
-            String command = sb.toString();
+            String command = isClusterMode()
+                    ? buildClusterCommand(libDir, mainClass)
+                    : buildLocalCommand(libDir, mainClass);
             log.info("ETL task command: {}", command);
 
             // 4. 交给 DolphinScheduler ShellCommandExecutor 执行：负责流式转发日志、记录进程信息，
@@ -322,6 +351,108 @@ public class EtlTask extends AbstractTask {
         } finally {
             cleanupPropsFile();
         }
+    }
+
+    private boolean isClusterMode() {
+        return "CLUSTER".equalsIgnoreCase(StringUtils.defaultString(etlParameters.getExecutionMode()).trim());
+    }
+
+    private String buildLocalCommand(String libDir, String mainClass) {
+        String classpath = buildClasspath(libDir);
+        String jvmArgs = StringUtils.isBlank(etlParameters.getJvmArgs())
+                ? defaultJvmArgs()
+                : etlParameters.getJvmArgs().trim();
+        jvmArgs = appendLocalJvmArgs(jvmArgs);
+
+        return new StringBuilder()
+                .append(resolveJavaCmd()).append(Constants.SPACE)
+                .append(jvmArgs).append(Constants.SPACE)
+                .append("-cp").append(Constants.SPACE).append(classpath).append(Constants.SPACE)
+                .append(mainClass).append(Constants.SPACE)
+                .append(propsFile.toAbsolutePath())
+                .toString();
+    }
+
+    private String buildClusterCommand(String libDir, String mainClass) {
+        if (!"STANDALONE".equalsIgnoreCase(StringUtils.defaultString(etlParameters.getClusterType()).trim())) {
+            throw new TaskException("ETL Flink cluster mode currently supports STANDALONE Session clusters only; "
+                    + "YARN and Kubernetes submission are not configured.");
+        }
+        if (!"BATCH".equalsIgnoreCase(StringUtils.defaultString(etlParameters.getRuntimeMode()).trim())) {
+            throw new TaskException("The current Flink ETL runner supports BATCH mode only.");
+        }
+        if (etlParameters.isCheckpointEnabled()) {
+            throw new TaskException("Checkpoint configuration is not supported by the current BATCH ETL runner.");
+        }
+
+        String flinkHome = System.getenv("FLINK_HOME");
+        if (StringUtils.isBlank(flinkHome)) {
+            throw new TaskException("Flink cluster ETL requires FLINK_HOME on the Worker, pointing to the Flink client "
+                    + "distribution (for example /opt/flink).");
+        }
+        File flinkCli = new File(flinkHome.trim(), "bin/flink");
+        if (!flinkCli.isFile() || !flinkCli.canExecute()) {
+            throw new TaskException("Flink CLI not found or not executable: " + flinkCli.getAbsolutePath());
+        }
+
+        String javaHome = System.getenv("ETL_JAVA_HOME");
+        if (StringUtils.isBlank(javaHome)) {
+            throw new TaskException(
+                    "Flink 1.20 cluster submission requires ETL_JAVA_HOME (JDK 11+, recommended JDK 17) "
+                            + "on the Worker.");
+        }
+        File java = new File(javaHome.trim(), "bin/java");
+        if (!java.isFile() || !java.canExecute()) {
+            throw new TaskException("ETL_JAVA_HOME does not contain an executable bin/java: " + java.getAbsolutePath());
+        }
+
+        String address = StringUtils.trimToEmpty(etlParameters.getJobManagerAddress());
+        if (address.isEmpty()) {
+            throw new TaskException("JobManager address is required for Flink cluster execution.");
+        }
+        int restPort = etlParameters.getJobManagerRestPort();
+        if (restPort < 1 || restPort > 65535) {
+            throw new TaskException("Invalid JobManager REST port: " + restPort);
+        }
+        String endpoint = FlinkClusterCommandBuilder.formatJobManagerEndpoint(address, restPort);
+
+        File clusterJar = resolveClusterJar(libDir);
+        clusterEndpoint = endpoint;
+        clusterFlinkCli = flinkCli;
+        clusterJavaHome = javaHome.trim();
+        log.info("Submitting ETL to Flink Session cluster {} with cluster jar {}", endpoint, clusterJar);
+        log.info("Standalone Session cluster resources (JobManager/TaskManager CPU, memory, count and slots) "
+                + "are provisioned when the cluster starts; this task submission does not resize the cluster.");
+
+        return FlinkClusterCommandBuilder.buildRunCommand(javaHome, flinkCli, endpoint,
+                etlParameters.getParallelism(), mainClass, clusterJar, propsFile);
+    }
+
+    private File resolveClusterJar(String libDir) {
+        String configuredJar = System.getenv("FLINK_ETL_CLUSTER_JAR");
+        if (StringUtils.isNotBlank(configuredJar)) {
+            File jar = new File(configuredJar.trim());
+            if (jar.isFile() && jar.canRead()) {
+                return jar.getAbsoluteFile();
+            }
+            throw new TaskException("FLINK_ETL_CLUSTER_JAR does not point to a readable JAR: "
+                    + jar.getAbsolutePath());
+        }
+
+        File directory = new File(libDir);
+        File[] candidates = directory.listFiles(file -> file.isFile()
+                && file.getName().endsWith(DEFAULT_CLUSTER_JAR_PATTERN));
+        if (candidates == null || candidates.length == 0) {
+            throw new TaskException("Flink cluster ETL JAR not found under " + directory.getAbsolutePath()
+                    + ". Put the *-cluster.jar there or set FLINK_ETL_CLUSTER_JAR to its full path.");
+        }
+        if (candidates.length > 1) {
+            Arrays.sort(candidates, Comparator.comparing(File::getName));
+            throw new TaskException("Multiple *-cluster.jar files found under " + directory.getAbsolutePath()
+                    + "; set FLINK_ETL_CLUSTER_JAR to select one: "
+                    + Arrays.stream(candidates).map(File::getName).collect(Collectors.joining(", ")));
+        }
+        return candidates[0].getAbsoluteFile();
     }
 
     /** Java 8 rejects --add-opens; only add module flags on Java 9+. */
@@ -369,12 +500,78 @@ public class EtlTask extends AbstractTask {
 
     @Override
     public void cancel() throws TaskException {
+        TaskException remoteCancelError = null;
+        if (isClusterMode()) {
+            try {
+                cancelSubmittedFlinkJobs();
+            } catch (TaskException e) {
+                remoteCancelError = e;
+            }
+        }
         try {
             shellCommandExecutor.cancelApplication();
         } catch (Exception e) {
             throw new TaskException("cancel etl task error", e);
         } finally {
             cleanupPropsFile();
+        }
+        if (remoteCancelError != null) {
+            throw remoteCancelError;
+        }
+    }
+
+    private void cancelSubmittedFlinkJobs() {
+        if (clusterFlinkCli == null || StringUtils.isBlank(clusterEndpoint) || StringUtils.isBlank(clusterJavaHome)) {
+            log.info("Flink cluster submission has not started; only cancelling the local submission process.");
+            return;
+        }
+        String logPath = taskRequest.getLogPath();
+        if (StringUtils.isBlank(logPath) || !Files.isReadable(Paths.get(logPath))) {
+            log.info("ETL task log is not readable yet; no Flink JobID is available for remote cancellation.");
+            return;
+        }
+
+        Set<String> jobIds = new LinkedHashSet<>();
+        try (java.util.stream.Stream<String> lines = Files.lines(Paths.get(logPath), StandardCharsets.UTF_8)) {
+            lines.forEach(line -> {
+                Matcher matcher = FLINK_JOB_ID_PATTERN.matcher(line);
+                while (matcher.find()) {
+                    jobIds.add(matcher.group(1));
+                }
+            });
+        } catch (IOException e) {
+            throw new TaskException("Cannot read ETL task log to find Flink JobID for cancellation", e);
+        }
+
+        for (String jobId : jobIds) {
+            ProcessBuilder processBuilder = new ProcessBuilder(
+                    clusterFlinkCli.getAbsolutePath(), "cancel", "-m", clusterEndpoint, jobId);
+            processBuilder.environment().put("JAVA_HOME", clusterJavaHome);
+            try {
+                Process process = processBuilder.redirectErrorStream(true).start();
+                try (
+                        BufferedReader reader = new BufferedReader(
+                                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                    String line;
+                    while ((line = reader.readLine()) != null) {
+                        log.info("Flink cancel [{}]: {}", jobId, line);
+                    }
+                }
+                int exitCode = process.waitFor();
+                if (exitCode != 0) {
+                    throw new TaskException("Flink CLI could not cancel JobID " + jobId
+                            + " (exit code " + exitCode + ")");
+                }
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new TaskException("Interrupted while cancelling Flink JobID " + jobId, e);
+            } catch (IOException e) {
+                throw new TaskException("Failed to start Flink CLI to cancel JobID " + jobId, e);
+            }
+        }
+        if (jobIds.isEmpty()) {
+            log.info(
+                    "No submitted Flink JobID found in the ETL task log; cancelling the local submission process only.");
         }
     }
 
@@ -491,6 +688,11 @@ public class EtlTask extends AbstractTask {
             File[] files = dir.listFiles((f) -> f.isFile() && f.getName().endsWith(".jar"));
             if (files != null) {
                 for (File f : files) {
+                    // The cluster artifact has provided Flink dependencies and is only for `flink run`.
+                    // Never put it on the local Fat-JAR classpath alongside the local runner.
+                    if (f.getName().endsWith(DEFAULT_CLUSTER_JAR_PATTERN)) {
+                        continue;
+                    }
                     if (cp.length() > 0)
                         cp.append(File.pathSeparator);
                     cp.append(f.getAbsolutePath());

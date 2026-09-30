@@ -139,6 +139,13 @@ export function getDatasourceDatabasesById(datasourceId: number): any {
   })
 }
 
+export function getDatasourceEtlNamespace(datasourceId: number): any {
+  return axios({
+    url: `/datasources/${datasourceId}/etl-namespace`,
+    method: 'get'
+  })
+}
+
 export function getDatasourceTablesById(
   datasourceId: number,
   database: string

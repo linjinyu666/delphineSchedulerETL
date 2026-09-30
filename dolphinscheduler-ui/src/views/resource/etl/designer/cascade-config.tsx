@@ -20,14 +20,14 @@ import {
   NSelect,
   NSpin,
   NEmpty,
-  NSpace,
   NButton,
   NDataTable,
-  NTag
+  NTag,
+  NInput
 } from 'naive-ui'
 import {
   queryDataSourceList,
-  getDatasourceDatabasesById,
+  getDatasourceEtlNamespace,
   getDatasourceTablesById,
   getDatasourceTableColumnsById
 } from '@/service/modules/data-source'
@@ -59,6 +59,8 @@ export default defineComponent({
     const dsType = ref<string | null>(props.modelValue?.dsType ?? null)
     const dsId = ref<number | null>(props.modelValue?.dsId ?? null)
     const database = ref<string | null>(props.modelValue?.database ?? null)
+    const fixedDatabase = ref<string | null>(null)
+    const namespaceError = ref('')
     const table = ref<string | null>(props.modelValue?.table ?? null)
     // 旧作业保存的是 {name,type}[]，早期版本也可能保存 string[]。
     // 统一成列名数组，避免重新打开作业时字段选中状态丢失。
@@ -73,7 +75,6 @@ export default defineComponent({
 
     const dsTypeOptions = ref<Option[]>([])
     const dsInstanceOptions = ref<Option[]>([])
-    const databaseOptions = ref<Option[]>([])
     const tableOptions = ref<Option[]>([])
     const columnOptions = ref<Option[]>([])
 
@@ -130,6 +131,8 @@ export default defineComponent({
         dsId: dsId.value,
         datasourceAlias: dsInstanceOptions.value.find((o) => o.value === dsId.value)?.label || String(dsId.value || ''),
         database: database.value,
+        fixedDatabase: fixedDatabase.value,
+        namespaceError: namespaceError.value,
         table: table.value,
         columns: colsWithType
       })
@@ -138,9 +141,10 @@ export default defineComponent({
 
     const reset = () => {
       database.value = null
+      fixedDatabase.value = null
+      namespaceError.value = ''
       table.value = null
       columns.value = []
-      databaseOptions.value = []
       tableOptions.value = []
       columnOptions.value = []
     }
@@ -160,24 +164,31 @@ export default defineComponent({
       }
     }
 
-    const loadDatabases = async (id: number) => {
+    let namespaceRequest = 0
+    const loadFixedNamespace = async (id: number, preserveSavedDatabase = false) => {
+      const request = ++namespaceRequest
       loadingDb.value = true
-      databaseOptions.value = []
+      namespaceError.value = ''
       try {
-        const resp = await getDatasourceDatabasesById(id)
-        // axios 返回的是 {code, msg, data, ...} 包装, 实际数组在 resp.data
-        // 兼容后端直接返回数组的情况 (response interceptor 移除包装)
-        const list = Array.isArray(resp) ? resp : (resp && Array.isArray(resp.data) ? resp.data : [])
-        // 后端可能返回两种结构：字符串数组 / [{label, value}] 对象
-        databaseOptions.value = list.map((d: any) =>
-          typeof d === 'string'
-            ? { label: d, value: d }
-            : { label: d.label || d.value, value: d.value }
-        )
+        const resp: any = await getDatasourceEtlNamespace(id)
+        if (request !== namespaceRequest || id !== dsId.value) return
+        const fixed = String(typeof resp === 'string' ? resp : (resp?.data || '')).trim()
+        if (!fixed) throw new Error('数据源没有可用的默认库 / Schema')
+        fixedDatabase.value = fixed
+        if (preserveSavedDatabase && database.value && database.value.toLowerCase() !== fixed.toLowerCase()) {
+          namespaceError.value = `此节点原选 ${database.value}，数据源固定为 ${fixed}。请选择指向 ${database.value} 的数据源。`
+        } else {
+          database.value = fixed
+        }
       } catch (e) {
-        databaseOptions.value = []
+        if (request !== namespaceRequest || id !== dsId.value) return
+        fixedDatabase.value = null
+        namespaceError.value = '无法读取数据源绑定的库 / Schema，请检查连接后重试。'
       } finally {
-        loadingDb.value = false
+        if (request === namespaceRequest) {
+          loadingDb.value = false
+          emitChange()
+        }
       }
     }
 
@@ -288,13 +299,13 @@ export default defineComponent({
 
     watch(dsId, async (v) => {
       if (!v) {
-        databaseOptions.value = []
+        namespaceRequest++
         reset()
         emitChange()
         return
       }
       reset()
-      await loadDatabases(v)
+      await loadFixedNamespace(v)
       emitChange()
     })
 
@@ -343,7 +354,7 @@ export default defineComponent({
     watch(columns, () => emitChange(), { deep: true })
 
     if (dsType.value) loadInstances(dsType.value)
-    if (dsId.value) loadDatabases(dsId.value)
+    if (dsId.value) loadFixedNamespace(dsId.value, true)
     if (dsId.value && database.value) loadTables(dsId.value, database.value)
     if (dsId.value && database.value && table.value) {
       loadColumns(dsId.value, database.value, table.value)
@@ -555,6 +566,17 @@ export default defineComponent({
           font-size: 12px;
           font-weight: 400;
         }
+        .cascade-config-field > .cascade-config-section-hint {
+          display: block;
+          margin-top: 5px;
+          color: #64748b;
+        }
+        .cascade-config-namespace-error {
+          margin-top: 6px;
+          color: #b91c1c;
+          font-size: 12px;
+          line-height: 1.5;
+        }
         .cascade-config-grid {
           display: grid;
           grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -659,7 +681,7 @@ export default defineComponent({
         <section class='cascade-config-section'>
           <div class='cascade-config-section-heading'>
             <span>{props.mode === 'sink' ? '目标数据源' : '数据源'} <span class='cascade-config-label-required'>*</span></span>
-            <span class='cascade-config-section-hint'>按顺序选择数据源、库和表</span>
+            <span class='cascade-config-section-hint'>选择数据源后自动绑定库 / Schema，再选择表</span>
           </div>
           <div class='cascade-config-grid'>
             <div class='cascade-config-field'>
@@ -690,31 +712,21 @@ export default defineComponent({
           )}
             </div>
             <div class='cascade-config-field'>
-              <label class='cascade-config-label'>Schema / 数据库 <span class='cascade-config-label-required'>*</span></label>
+              <label class='cascade-config-label'>绑定的 Schema / 数据库 <span class='cascade-config-label-required'>*</span></label>
           {loadingDb.value ? (
             <NSpin size='small' />
-          ) : databaseOptions.value.length === 0 && dsId.value ? (
-            <NSpace vertical>
-              <NEmpty size='small' description='该数据源无多 schema 列表（MySQL 等单库数据库无需选择）' />
-              <NButton
-                size='small'
-                onClick={() => {
-                  database.value = 'default'
-                  emitChange()
-                }}
-              >
-                使用默认（default）
-              </NButton>
-            </NSpace>
           ) : (
-            <NSelect
-              v-model:value={database.value}
-              options={databaseOptions.value}
-              placeholder='请选择数据库'
-              filterable
-              clearable
-              disabled={!dsId.value}
+            <NInput
+              value={database.value || ''}
+              placeholder={dsId.value ? '等待数据源默认库 / Schema' : '请先选择数据源实例'}
+              readonly
+              aria-label='数据源绑定的 Schema 或数据库'
             />
+          )}
+          {namespaceError.value ? (
+            <div class='cascade-config-namespace-error' role='alert'>{namespaceError.value}</div>
+          ) : (
+            <div class='cascade-config-section-hint'>由数据源连接决定；如需其他库 / Schema，请选择对应的数据源。</div>
           )}
             </div>
             <div class='cascade-config-field'>
