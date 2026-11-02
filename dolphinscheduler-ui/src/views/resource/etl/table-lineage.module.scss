@@ -1,0 +1,92 @@
+.lineage-modal {
+  max-height: min(68vh, 640px);
+  overflow-y: auto;
+}
+
+.description,
+.footnote {
+  color: var(--n-text-color-3, #666);
+  line-height: 1.5;
+  margin: 0 0 16px;
+}
+
+.summary {
+  font-weight: 600;
+  margin: 0 0 12px;
+}
+
+.flow-list {
+  display: grid;
+  gap: 8px;
+}
+
+.pagination {
+  display: flex;
+  justify-content: center;
+  margin-top: 16px;
+}
+
+.flow-row {
+  align-items: center;
+  border: 1px solid var(--n-border-color, #e5e7eb);
+  border-radius: 6px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) 28px minmax(0, 1fr);
+  padding: 12px;
+}
+
+.table-ref {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+
+  strong {
+    overflow-wrap: anywhere;
+  }
+}
+
+.role {
+  color: var(--n-text-color-3, #666);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.arrow {
+  color: var(--n-primary-color, #2080f0);
+  font-size: 20px;
+  text-align: center;
+}
+
+.centered {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  justify-content: center;
+  min-height: 140px;
+}
+
+.notice {
+  margin-top: 16px;
+}
+
+.footnote {
+  font-size: 12px;
+  margin: 16px 0 0;
+}
+
+.retry {
+  margin-left: 12px;
+}
+
+@media (max-width: 600px) {
+  .flow-row {
+    gap: 4px;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .arrow {
+    text-align: left;
+  }
+}

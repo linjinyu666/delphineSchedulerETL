@@ -21,6 +21,7 @@ import { useRouter } from 'vue-router'
 import { bytesToSize } from '@/common/common'
 import TableAction from './table-action'
 import { IRenameResource, IReuploadResource, ResourceType } from '../types'
+import type { ResourceFileTableData } from '../types'
 import ButtonLink from '@/components/button-link'
 import { NEllipsis } from 'naive-ui'
 import {
@@ -79,6 +80,8 @@ export function useTable() {
     uploadShowRef: ref(false),
     isReupload: ref(false),
     renameShowRef: ref(false),
+    lineageShowRef: ref(false),
+    lineageResource: ref<ResourceFileTableData | null>(null),
     searchRef: ref(),
     renameInfo: ref({
       name: '',
@@ -176,9 +179,15 @@ export function useTable() {
               reuploadResource(name, description, fullName, user_name),
             onRenameResource: (name, description, fullName, user_name) =>
               renameResource(name, description, fullName, user_name),
+            onViewLineage: (resource: ResourceFileTableData) => {
+              variables.lineageResource = resource
+              variables.lineageShowRef = true
+            },
             onUpdateList: () => updateList()
           }),
-        ...COLUMN_WIDTH_CONFIG['operation'](5)
+        ...COLUMN_WIDTH_CONFIG['operation'](
+          variables.resourceType === 'ETL' ? 6 : 5
+        )
       }
     ]
   }

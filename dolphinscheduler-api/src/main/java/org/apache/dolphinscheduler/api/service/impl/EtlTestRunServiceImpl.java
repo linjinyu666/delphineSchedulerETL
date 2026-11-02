@@ -700,9 +700,23 @@ public class EtlTestRunServiceImpl implements EtlTestRunService {
     private void fillMissingPasswordsFromDb(PipelineRequest req) {
         if (req.getDatasources() == null || req.getDatasources().isEmpty())
             return;
+        // The designer sends every datasource visible to the user, including ones that
+        // are not part of this pipeline. Do not open those connections: an unrelated
+        // unavailable datasource must not prevent a MySQL/Dameng test run.
+        LinkedHashSet<String> usedDatasourceIds = new LinkedHashSet<>();
+        if (req.getSources() != null) {
+            for (Map<String, Object> source : req.getSources()) {
+                usedDatasourceIds.add(stringOf(source.get("datasourceId")));
+            }
+        }
+        if (req.getSinks() != null) {
+            for (Map<String, Object> sink : req.getSinks()) {
+                usedDatasourceIds.add(stringOf(sink.get("datasourceId")));
+            }
+        }
         for (Map<String, Object> ds : req.getDatasources()) {
             String id = stringOf(ds.get("id"));
-            if (id.isEmpty())
+            if (id.isEmpty() || !usedDatasourceIds.contains(id))
                 continue;
             int dsId;
             try {

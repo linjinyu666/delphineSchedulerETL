@@ -731,12 +731,13 @@ function generateSqlFromCanvas(
       }
       case 'cdc': {
         const ups = (incoming.get(n.id) || []).map((c) => visit(c)).filter(Boolean)
-        const key = cfg.key || 'id'
         if (ups.length < 2) {
           warnings.push(`cdc 节点 "${n.label}" 入边少于 2（实际 ${ups.length}）`)
           seg = ups[0] || ''
         } else {
-          seg = `((${ups[0]} EXCEPT ${ups[1]}) UNION (${ups[1]} EXCEPT ${ups[0]}) /* key=${key} */)`
+          // EXCEPT takes queries, not bare table/view names. Keep both
+          // differences inside derived tables so stageNode can register a view.
+          seg = `(SELECT * FROM (SELECT * FROM ${ups[0]} EXCEPT SELECT * FROM ${ups[1]}) AS removed_rows UNION SELECT * FROM (SELECT * FROM ${ups[1]} EXCEPT SELECT * FROM ${ups[0]}) AS added_rows)`
         }
         break
       }
@@ -1107,7 +1108,11 @@ function parseFieldsSpec(raw: string): Array<{ name: string; type: string }> {
 function parseSourceSpec(spec: string, datasources: DatasourceConfig[], srcs: CanvasNode[]): any {
   const parts = spec.split('|')
   const alias = parts[5]
-  const matchingSrc = srcs.find((n) => sanitizeAlias(n.id) === alias)
+  const matchingSrc = srcs.find((n) =>
+    sanitizeAlias(n.id) === alias ||
+    sanitizeAlias(n.label) === alias ||
+    sanitizeAlias(n.config?.alias) === alias
+  )
   const cfg = matchingSrc?.config || {}
   let dsId = cfg.datasourceId ?? cfg.cascade?.dsId
   let dsEntry: DatasourceConfig | undefined

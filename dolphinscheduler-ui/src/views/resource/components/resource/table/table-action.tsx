@@ -23,7 +23,8 @@ import {
   DownloadOutlined,
   FormOutlined,
   EditOutlined,
-  UploadOutlined
+  UploadOutlined,
+  BranchesOutlined
 } from '@vicons/antd'
 import _ from 'lodash'
 import { useI18n } from 'vue-i18n'
@@ -59,7 +60,7 @@ const props = {
 export default defineComponent({
   name: 'TableAction',
   props,
-  emits: ['updateList', 'reuploadResource', 'renameResource'],
+  emits: ['updateList', 'reuploadResource', 'renameResource', 'viewLineage'],
   setup(props, { emit }) {
     const { t } = useI18n()
     const router: Router = useRouter()
@@ -153,13 +154,13 @@ export default defineComponent({
                       : this.rtDisb(this.row.name, this.row.size)
                   }
                   tag='div'
-                      onClick={() => {
-                        this.handleEditFile({
-                          fullName: this.row.fullName,
-                          user_name: this.row.user_name,
-                          alias: this.row.alias,
-                          type: this.row.type
-                        })
+                  onClick={() => {
+                    this.handleEditFile({
+                      fullName: this.row.fullName,
+                      user_name: this.row.user_name,
+                      alias: this.row.alias,
+                      type: this.row.type
+                    })
                   }}
                   style={{ marginRight: '-5px' }}
                   circle
@@ -173,6 +174,28 @@ export default defineComponent({
             }}
           </NTooltip>
         }
+        {this.resourceType === 'ETL' && !this.row.directory && (
+          <NTooltip trigger={'hover'}>
+            {{
+              default: () => '查看数据流向',
+              trigger: () => (
+                <NButton
+                  size='tiny'
+                  type='info'
+                  circle
+                  aria-label='查看数据流向'
+                  class='btn-view-lineage'
+                  style={{ marginRight: '-5px' }}
+                  onClick={() => this.$emit('viewLineage', this.row)}
+                >
+                  <NIcon>
+                    <BranchesOutlined />
+                  </NIcon>
+                </NButton>
+              )
+            }}
+          </NTooltip>
+        )}
         <NTooltip trigger={'hover'}>
           {{
             default: () => t('resource.file.reupload'),

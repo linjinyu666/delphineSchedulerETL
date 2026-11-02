@@ -20,6 +20,7 @@ import { remove, cloneDeep } from 'lodash'
 import { TaskType } from '@/store/project/types'
 import { formatParams } from '@/views/projects/task/components/node/format-data'
 import { viewEtlContent } from '@/service/modules/resources'
+import { extractEtlDatasourceIds } from '@/views/projects/task/components/node/etl-resource'
 import { useCellUpdate } from './dag-hooks'
 import type { Ref } from 'vue'
 import type { Graph } from '@antv/x6'
@@ -67,21 +68,6 @@ export function useTaskEdit(options: Options) {
     name: ''
   })
   const taskModalVisible = ref(false)
-
-  const extractEtlDatasourceIds = (content: string): number[] => {
-    try {
-      const json = JSON.parse(content)
-      return Array.from(
-        new Set(
-          (json.nodes || [])
-            .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
-            .filter((id: number) => Number.isInteger(id) && id > 0)
-        )
-      )
-    } catch {
-      return []
-    }
-  }
 
   // The workflow definition may contain an old ETL task snapshot. Refresh it
   // from the database-backed ETL resource before the workflow is saved, even

@@ -8,6 +8,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { queryResourceList, viewEtlContent } from '@/service/modules/resources'
 import * as Fields from '../fields/index'
 import type { IJsonItem, INodeData, ITaskData } from '../types'
+import { extractEtlDatasourceIds } from '../etl-resource'
 
 /** Workflow ETL node. The selected resource is resolved by the ETL task plugin. */
 export function useEtl({
@@ -83,6 +84,7 @@ export function useEtl({
     if (!resource) {
       model.etlContent = ''
       model.datasourceIds = []
+      etlContentLoading.value = false
       return
     }
     etlContentLoading.value = true
@@ -91,7 +93,7 @@ export function useEtl({
       if (requestId !== contentRequestId) return
       const content = result?.content || result?.data?.content || ''
       model.etlContent = content
-      model.datasourceIds = extractDatasourceIds(content)
+      model.datasourceIds = extractEtlDatasourceIds(content)
     } catch {
       if (requestId === contentRequestId) {
         model.etlContent = ''
@@ -194,16 +196,16 @@ export function useEtl({
           // its value is not guaranteed to be propagated back to the reactive
           // model before the async callback runs. Keep the model authoritative
           // so format-data can persist the selected resource and its dsIds.
-          model.etlResource = resource || ''
-          void loadEtlContent(resource)
+          const selected = resource || ''
+          if (model.etlResource === selected) void loadEtlContent(selected)
+          else model.etlResource = selected
         }
       },
       validate: {
         trigger: ['change', 'blur'],
         required: true,
-        message: '请选择一个 ETL 作业',
         validator: (_validate: any, value: string) => {
-          if (!value) return
+          if (!value) return new Error('请选择一个 ETL 作业')
           if (etlContentLoading.value) {
             return new Error('ETL 作业内容加载中，请稍后保存')
           }
@@ -213,6 +215,7 @@ export function useEtl({
           if (!model.datasourceIds?.length) {
             return new Error('ETL 作业未配置有效的 dsId')
           }
+          return true
         }
       },
       value: (model as any).etlResource
@@ -416,19 +419,6 @@ export function useEtl({
       Fields.usePreTasks()
     ] as IJsonItem[],
     model
-  }
-
-  function extractDatasourceIds(content: string): number[] {
-    if (!content) return []
-    try {
-      const parsed = JSON.parse(content.replace(/\\n/g, '\n').replace(/\\r/g, '\r').replace(/\\t/g, '\t'))
-      const ids: number[] = (parsed.nodes || [])
-        .map((node: any) => Number(node?.config?.cascade?.dsId ?? node?.config?.datasourceId))
-        .filter((id: number) => Number.isInteger(id) && id > 0)
-      return [...new Set(ids)]
-    } catch {
-      return []
-    }
   }
 
   function positiveNumberRule(label: string) {

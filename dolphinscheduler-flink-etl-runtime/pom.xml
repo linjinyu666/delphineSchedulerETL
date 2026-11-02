@@ -29,6 +29,13 @@
     </modules>
 
     <dependencies>
+        <!-- Ship the driver with the runner so Flink cluster clients and
+             TaskManagers can discover the same Dameng JDBC implementation. -->
+        <dependency>
+            <groupId>com.dameng</groupId>
+            <artifactId>DmJdbcDriver18</artifactId>
+            <version>8.1.1.193</version>
+        </dependency>
         <!-- MySQL JDBC 驱动 + Flink JDBC connector -->
         <dependency>
             <groupId>mysql</groupId>

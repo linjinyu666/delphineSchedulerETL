@@ -51,6 +51,7 @@ import Search from '@/components/input-search'
 import { ResourceType } from '@/views/resource/components/resource/types'
 import { useUserStore } from '@/store/user/user'
 import { queryBaseDir } from '@/service/modules/resources'
+import TableLineageModal from '@/views/resource/etl/TableLineageModal'
 
 const props = {
   resourceType: {
@@ -148,6 +149,8 @@ export default defineComponent({
               : `${etlBaseDir}/`
           }
         } catch (error) {
+          // Keep the original list behavior while retaining this diagnostic.
+          // eslint-disable-next-line no-console
           console.warn('[resource] failed to resolve ETL base directory', error)
         }
       }
@@ -217,19 +220,24 @@ export default defineComponent({
       tableWidth
     } = this
     const isEtl = this.resourceType === 'ETL'
-    const manageTitle = isEtl
-      ? 'ETL 作业管理'
-      : t('resource.file.file_manage')
+    const manageTitle = isEtl ? 'ETL 作业管理' : t('resource.file.file_manage')
     const createBtnLabel = isEtl
       ? '新建 ETL 作业'
       : t('resource.file.create_file')
-    const uploadBtnLabel = isEtl ? '上传 ETL 文件' : t('resource.file.upload_files')
+    const uploadBtnLabel = isEtl
+      ? '上传 ETL 文件'
+      : t('resource.file.upload_files')
     const searchPlaceholder = isEtl
       ? '搜索 ETL 作业名称或路径（数据库）'
       : t('resource.file.enter_keyword_tips')
     const breadcrumbItems = isEtl
       ? this.breadListRef?.length
-        ? [{ item: this.breadListRef[this.breadListRef.length - 1], index: this.breadListRef.length - 1 }]
+        ? [
+            {
+              item: this.breadListRef[this.breadListRef.length - 1],
+              index: this.breadListRef.length - 1
+            }
+          ]
         : []
       : this.breadListRef?.map((item, index) => ({ item, index })) ?? []
 
@@ -339,6 +347,12 @@ export default defineComponent({
           userName={this.renameInfo.user_name}
           onUpdateList={this.updateList}
         />
+        {isEtl && (
+          <TableLineageModal
+            v-model:show={this.lineageShowRef}
+            resource={this.lineageResource}
+          />
+        )}
       </NSpace>
     )
   }

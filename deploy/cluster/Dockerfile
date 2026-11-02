@@ -8,8 +8,8 @@ WORKDIR ${DOLPHINSCHEDULER_HOME}
 
 # The CI job must run Maven first. The official distribution tar contains
 # service launchers, libraries, plugins, bundled JDBC drivers, configs and flink-etl.
-# Oracle JDBC is not bundled by default; add ojdbc8 to api-server/libs (and
-# worker-server/libs when needed) in the build context before building this image.
+# Oracle JDBC is not bundled by default. Put one ojdbc8 JAR in the final
+# plugins/datasource-plugins/ directory (in the tarball or via a build-time COPY).
 # One immutable role image is used by separate API/Master/Worker/Alert
 # containers; SERVICE selects exactly one process per container.
 COPY dist/target/apache-dolphinscheduler-*-bin.tar.gz /tmp/

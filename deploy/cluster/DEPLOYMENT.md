@@ -170,7 +170,9 @@ kubectl -n etl create secret generic dolphinscheduler-db \
 - 探针：`GET /dolphinscheduler/actuator/health`；
 - 挂载共享资源和日志存储。
 
-若 ETL 设计器需要读取 Oracle 数据源，API 进程的类路径必须包含兼容 JDK 8 的 `ojdbc8-*.jar`。`dolphinscheduler-datasource-oracle-*.jar` 只是数据源插件，不等于 Oracle JDBC 驱动。将驱动放入镜像内的 `api-server/libs/`，并滚动更新所有 API 副本；否则“测试连接”和自动绑定 Schema 都会因 `oracle.jdbc.OracleDriver` 缺失而失败。Flink Runner 所在的 `flink-etl/lib/` 不在 API 类路径内，单独放在那里无效。
+若 ETL 设计器需要读取 Oracle 数据源，API 进程的类路径必须包含兼容 JDK 8 的 `ojdbc8-*.jar`。当前 `dolphinscheduler-datasource-oracle-*-shade.jar` 不含 `oracle.jdbc.OracleDriver`，而达梦的 shade JAR 已包含达梦驱动。统一将一份 Oracle JDBC 驱动放入分发目录的 `plugins/datasource-plugins/`，不要同时放入 `api-server/libs/` 等服务目录。API、Master、Worker 的启动脚本都会加载该插件目录；更新后重启使用它的服务及所有副本。Flink Runner 所在的 `flink-etl/lib/` 不在 API 类路径内，单独放在那里无法修复页面“测试连接”。
+
+内网服务器修改步骤和 CCE 镜像构建说明见 [Oracle JDBC 内网操作文档](ORACLE_JDBC_INTRANET.md)。
 
 本地 standalone 启动则放在 `standalone-server/libs/`，并重启 standalone 进程；运行中的 JVM 不会动态加载后来复制的 JAR。重新生成分发目录时须重新放入驱动，因为普通 Maven 分发包不自动捆绑 Oracle JDBC 驱动。
 
@@ -189,7 +191,7 @@ kubectl -n etl create secret generic dolphinscheduler-db \
 - RPC 端口：1234；
 - `WORKER_EXECUTION_PATH` 使用持久卷或可写临时目录；
 - 如果执行 ETL/Flink，需要把 ETL jar、JDBC 驱动和插件随镜像打入，不能依赖公网下载。
-- Worker 上需要直接访问 Oracle 的任务，也应在 `worker-server/libs/` 放入同一 `ojdbc8-*.jar`；Flink 集群执行时还需确保 Runner/TaskManager 一侧有 Oracle 驱动。
+- Worker 上需要直接访问 Oracle 的任务使用上文统一放在 `plugins/datasource-plugins/` 的驱动；Flink 集群执行时还需单独验证 Runner/TaskManager 一侧的 Oracle 驱动是否可用。
 - 若使用 Flink Session 集群执行，按上节挂载 Flink CLI、JDK 17 和 `*-cluster.jar`，并给 Worker Pod 注入 `FLINK_HOME`、`ETL_JAVA_HOME`、`FLINK_ETL_CLUSTER_JAR`；不要只配置 JobManager 地址而遗漏提交客户端文件。
 
 ### 6.5 Alert

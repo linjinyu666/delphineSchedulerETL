@@ -763,7 +763,7 @@ public class ConfigurableJdbcEtl {
                     result.print();
                     System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 查询完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms)");
                 } catch (Exception ex) {
-                    System.out.println("[SQL " + sqlIdx + "/" + totalSqls + "] 查询完成 (耗时 " + (System.currentTimeMillis()-sqlStart) + "ms), print 失败: " + LogSanitizer.redactCredentials(ex.getMessage()));
+                    throw sanitizedFailure("Query result fetch failed", ex);
                 }
             }
         }
